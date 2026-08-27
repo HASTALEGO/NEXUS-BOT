@@ -1183,6 +1183,10 @@ class FrecuenciaButton(discord.ui.Button):
 # OPCIONES DE INSCRIPCIÓN
 # ============================================================
 
+# ============================================================
+# OPCIONES DE INSCRIPCIÓN
+# ============================================================
+
 class OpcionesButton(discord.ui.Button):
 
     def __init__(self, user_id):
@@ -1203,127 +1207,97 @@ class OpcionesButton(discord.ui.Button):
             "`Nombre(plazas máximas), Nombre(plazas máximas)`\n\n"
             "Ejemplo:\n"
             "`Tanque(2), DPS(5), Sanador(3)`\n\n"
-            "Para plazas ilimitadas puedes escribir solamente "
-            "el nombre:\n"
-            "`Jugador, Espectador(10), Reserva`\n\n"
-            "También puedes escribir explícitamente:\n"
-            "`Jugador(ilimitado)`"
-        )
-
-        contenido = await esperar_mensaje(
-            interaction.user
-        )
-
-        if not contenido:
-
-            return
-
-        contenido = contenido.strip()
-
-        # --------------------------------------------------------
-        # NINGUNA OPCIÓN
-        # --------------------------------------------------------
-
-        if contenido.lower() == "ninguna":
-
-            datos = obtener_datos(
+            "Para plazas ilimitadas:\n"
+            "`Jugador, Reserva`\n\n"
+            "También puedes usar:\n"
+            "`Jugador(ilimitado)`\n\n"
+            "También puedes pulsar **Opción predeterminada** "
+            "para crear una única opción llamada "
+            "**Participantes**.",
+            view=OpcionesView(
                 self.user_id
             )
+        )
 
-            datos["options"] = []
+        # ====================================================
+        # ESPERAR HASTA RECIBIR UNA ENTRADA VÁLIDA
+        # ====================================================
 
-            await actualizar_panel(
-                self.user_id
+        while True:
+
+            contenido = await esperar_mensaje(
+                interaction.user
             )
 
-            return
+            if not contenido:
+                return
 
-        # --------------------------------------------------------
-        # SEPARAR OPCIONES
-        # --------------------------------------------------------
+            contenido = contenido.strip()
 
-        partes = contenido.split(",")
+            # ------------------------------------------------
+            # NINGUNA
+            # ------------------------------------------------
 
-        opciones = []
+            if contenido.lower() == "ninguna":
 
-        errores = []
+                datos = obtener_datos(
+                    self.user_id
+                )
 
-        for parte in partes:
+                datos["options"] = []
 
-            parte = parte.strip()
+                await actualizar_panel(
+                    self.user_id
+                )
 
-            if not parte:
+                return
 
-                continue
+            # ------------------------------------------------
+            # COMPROBAR LONGITUD
+            # ------------------------------------------------
 
-            # ----------------------------------------------------
-            # FORMATO
-            #
-            # Nombre
-            # Nombre(5)
-            # Nombre(ilimitado)
-            # ----------------------------------------------------
+            if len(contenido) > 1000:
 
-            match = re.fullmatch(
-                r"\s*(.+?)\s*"
-                r"(?:\(\s*(\d+|ilimitado)\s*\))?"
-                r"\s*",
-                parte,
-                re.IGNORECASE
-            )
-
-            if not match:
-
-                errores.append(
-                    parte
+                await interaction.followup.send(
+                    "El texto supera el límite permitido.\n\n"
+                    f"Caracteres introducidos: "
+                    f"{len(contenido)}\n"
+                    "Límite: 1000\n\n"
+                    "Vuelve a introducir las opciones "
+                    "cumpliendo el límite de caracteres."
                 )
 
                 continue
 
-            nombre = match.group(1).strip()
+            # ------------------------------------------------
+            # SEPARAR OPCIONES
+            # ------------------------------------------------
 
-            plazas_raw = match.group(2)
+            partes = contenido.split(",")
 
-            # ----------------------------------------------------
-            # COMPROBAR NOMBRE
-            # ----------------------------------------------------
+            opciones = []
+            errores = []
 
-            if not nombre:
+            # ------------------------------------------------
+            # ANALIZAR CADA OPCIÓN
+            # ------------------------------------------------
 
-                errores.append(
-                    parte
+            for parte in partes:
+
+                parte = parte.strip()
+
+                if not parte:
+                    continue
+
+                match = re.fullmatch(
+                    r"\s*(.+?)\s*"
+                    r"(?:\(\s*(\d+|ilimitado)\s*\))?"
+                    r"\s*",
+                    parte,
+                    re.IGNORECASE
                 )
 
-                continue
-
-            if len(nombre) > 100:
-
-                errores.append(
-                    f"{nombre[:30]}... "
-                    "(nombre demasiado largo)"
-                )
-
-                continue
-
-            # ----------------------------------------------------
-            # PLAZAS
-            # ----------------------------------------------------
-
-            if plazas_raw is None:
-
-                max_slots = None
-
-            elif plazas_raw.lower() == "ilimitado":
-
-                max_slots = None
-
-            else:
-
-                max_slots = int(
-                    plazas_raw
-                )
-
-                if max_slots <= 0:
+                if not match:
 
                     errores.append(
                         parte
@@ -1331,71 +1305,136 @@ class OpcionesButton(discord.ui.Button):
 
                     continue
 
-            # ----------------------------------------------------
-            # GUARDAR OPCIÓN
-            # ----------------------------------------------------
+                nombre = match.group(1).strip()
 
-            opciones.append(
-                {
-                    "name": nombre,
-                    "emoji": "",
-                    "max_slots": max_slots
-                }
+                plazas_raw = match.group(2)
+
+                # --------------------------------------------
+                # NOMBRE
+                # --------------------------------------------
+
+                if not nombre:
+
+                    errores.append(
+                        parte
+                    )
+
+                    continue
+
+                if len(nombre) > 100:
+
+                    errores.append(
+                        f"{nombre[:30]}... "
+                        "(nombre demasiado largo)"
+                    )
+
+                    continue
+
+                # --------------------------------------------
+                # PLAZAS
+                # --------------------------------------------
+
+                if plazas_raw is None:
+
+                    max_slots = None
+
+                elif plazas_raw.lower() == "ilimitado":
+
+                    max_slots = None
+
+                else:
+
+                    max_slots = int(
+                        plazas_raw
+                    )
+
+                    if max_slots <= 0:
+
+                        errores.append(
+                            parte
+                        )
+
+                        continue
+
+                # --------------------------------------------
+                # GUARDAR
+                # --------------------------------------------
+
+                opciones.append(
+                    {
+                        "name": nombre,
+                        "emoji": "",
+                        "max_slots": max_slots
+                    }
+                )
+
+            # ------------------------------------------------
+            # ERRORES DE FORMATO
+            # ------------------------------------------------
+
+            if errores:
+
+                mensaje = (
+                    "No pude interpretar algunas opciones.\n\n"
+                    "Formato correcto:\n"
+                    "`Tanque(2), DPS(5), Sanador(3)`\n\n"
+                    "Para plazas ilimitadas:\n"
+                    "`Jugador, Reserva`\n\n"
+                    "También puedes usar:\n"
+                    "`Jugador(ilimitado)`\n\n"
+                    "Opciones con formato incorrecto:\n"
+                )
+
+                mensaje += "\n".join(
+                    f"- `{error}`"
+                    for error in errores
+                )
+
+                mensaje += (
+                    "\n\n"
+                    "Vuelve a introducir las opciones "
+                    "cumpliendo con el formato indicado."
+                )
+
+                await interaction.followup.send(
+                    mensaje
+                )
+
+                # IMPORTANTE:
+                # No hacemos return.
+                # Volvemos a esperar otro mensaje.
+                continue
+
+            # ------------------------------------------------
+            # NINGUNA OPCIÓN VÁLIDA
+            # ------------------------------------------------
+
+            if not opciones:
+
+                await interaction.followup.send(
+                    "No se encontró ninguna opción válida.\n\n"
+                    "Vuelve a introducir las opciones "
+                    "cumpliendo con el formato indicado."
+                )
+
+                continue
+
+            # ------------------------------------------------
+            # GUARDAR
+            # ------------------------------------------------
+
+            datos = obtener_datos(
+                self.user_id
             )
 
-        # --------------------------------------------------------
-        # COMPROBAR ERRORES
-        # --------------------------------------------------------
+            datos["options"] = opciones
 
-        if errores:
-
-            mensaje = (
-                "No pude interpretar algunas opciones.\n\n"
-                "Formato correcto:\n"
-                "`Tanque(2), DPS(5), Sanador(3)`\n\n"
-                "Para plazas ilimitadas:\n"
-                "`Jugador, Reserva`\n\n"
-                "También puedes usar:\n"
-                "`Jugador(ilimitado)`\n\n"
-                "Opciones con formato incorrecto:\n"
+            await actualizar_panel(
+                self.user_id
             )
 
-            mensaje += "\n".join(
-                f"- `{error}`"
-                for error in errores
-            )
-
-            await interaction.followup.send(
-                mensaje
-            )
-
-            return
-
-        # --------------------------------------------------------
-        # COMPROBAR QUE EXISTAN OPCIONES
-        # --------------------------------------------------------
-
-        if not opciones:
-
-            await interaction.followup.send(
-                "No se encontró ninguna opción válida."
-            )
-
-            return
-
-        # --------------------------------------------------------
-        # GUARDAR
-        # --------------------------------------------------------
-
-        datos = obtener_datos(
-            self.user_id
-        )
-
-        datos["options"] = opciones
-
-        await actualizar_panel(
-            self.user_id
-        )
+            # Entrada correcta.
+            break
 
 
 # ============================================================
@@ -4696,6 +4735,1652 @@ async def roles_bloqueados(
 
 
 # ============================================================
+# CREACIÓN DE EVENTOS - SISTEMA CONVERSACIONAL
+# ============================================================
+
+CREACION_TIMEOUT = 1800
+
+
+def mensaje_creacion(texto):
+    return (
+        "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+        "      CREACIÓN DE EVENTO\n"
+        "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
+        f"{texto}\n\n"
+        "Para cancelar la creación escribe `cancel`."
+    )
+
+
+async def esperar_mensaje_creacion(
+    bot,
+    user_id,
+    channel_id,
+    pregunta,
+    validar=None
+):
+    while True:
+
+        await bot.get_channel(channel_id).send(
+            mensaje_creacion(pregunta)
+        )
+
+        def check(message):
+
+            return (
+                message.author.id == user_id
+                and message.channel.id == channel_id
+            )
+
+        try:
+
+            message = await bot.wait_for(
+                "message",
+                timeout=CREACION_TIMEOUT,
+                check=check
+            )
+
+        except asyncio.TimeoutError:
+
+            return None
+
+        contenido = message.content.strip()
+
+        if contenido.lower() == "cancel":
+
+            return "CANCEL"
+
+        if validar is not None:
+
+            valido, resultado = validar(contenido)
+
+            if not valido:
+
+                await message.channel.send(
+                    f"❌ {resultado}\n\n"
+                    "Vuelve a introducirlo correctamente."
+                )
+
+                continue
+
+            return resultado
+
+        return contenido
+
+
+# ============================================================
+# VALIDADORES
+# ============================================================
+
+def validar_numero(contenido, minimo=1, maximo=None):
+
+    try:
+
+        numero = int(contenido)
+
+    except ValueError:
+
+        return (
+            False,
+            "Debes introducir un número."
+        )
+
+    if numero < minimo:
+
+        return (
+            False,
+            f"El número debe ser como mínimo {minimo}."
+        )
+
+    if maximo is not None and numero > maximo:
+
+        return (
+            False,
+            f"El número máximo permitido es {maximo}."
+        )
+
+    return True, numero
+
+
+def validar_opciones_inscripcion(contenido):
+
+    partes = [
+        parte.strip()
+        for parte in contenido.split(",")
+        if parte.strip()
+    ]
+
+    if not partes:
+
+        return (
+            False,
+            "Debes introducir al menos una opción."
+        )
+
+    opciones = []
+
+    for parte in partes:
+
+        if "(" in parte:
+
+            if not parte.endswith(")"):
+
+                return (
+                    False,
+                    f"Formato incorrecto en `{parte}`."
+                )
+
+            nombre, plazas = parte.rsplit("(", 1)
+
+            nombre = nombre.strip()
+            plazas = plazas[:-1].strip()
+
+            if not nombre:
+
+                return (
+                    False,
+                    "Una opción no puede tener el nombre vacío."
+                )
+
+            try:
+
+                plazas = int(plazas)
+
+            except ValueError:
+
+                return (
+                    False,
+                    f"Las plazas de `{nombre}` deben ser un número."
+                )
+
+            if plazas < 1:
+
+                return (
+                    False,
+                    "El número de plazas debe ser mayor que 0."
+                )
+
+        else:
+
+            nombre = parte
+            plazas = None
+
+        if len(nombre) > 100:
+
+            return (
+                False,
+                f"`{nombre}` supera los 100 caracteres."
+            )
+
+        opciones.append(
+            {
+                "name": nombre,
+                "max_slots": plazas
+            }
+        )
+
+    return True, opciones
+
+
+# ============================================================
+# MENÚ PRINCIPAL
+# ============================================================
+
+async def menu_creacion_evento(
+    bot,
+    user_id,
+    channel_id,
+    datos
+):
+
+    while True:
+
+        opciones = (
+            "1. Información básica\n"
+            "2. Fecha y duración\n"
+            "3. Inscripciones\n"
+            "4. Menciones\n"
+            "5. Apariencia\n"
+            "6. Ubicación\n"
+            "7. Recordatorios\n"
+            "8. Canal de publicación\n"
+            "9. Vista previa\n"
+            "10. Publicar evento\n"
+            "11. Cancelar creación"
+        )
+
+        respuesta = await esperar_mensaje_creacion(
+            bot,
+            user_id,
+            channel_id,
+            opciones
+            + "\n\nIntroduce el número de una sección.",
+            validar=lambda x: validar_numero(
+                x,
+                1,
+                11
+            )
+        )
+
+        if respuesta is None:
+
+            return False
+
+        if respuesta == "CANCEL":
+
+            return False
+
+        if respuesta == 1:
+
+            resultado = await menu_informacion_basica(
+                bot,
+                user_id,
+                channel_id,
+                datos
+            )
+
+            if resultado == "CANCEL":
+
+                return False
+
+        elif respuesta == 2:
+
+            resultado = await menu_fecha(
+                bot,
+                user_id,
+                channel_id,
+                datos
+            )
+
+            if resultado == "CANCEL":
+
+                return False
+
+        elif respuesta == 3:
+
+            resultado = await menu_inscripciones(
+                bot,
+                user_id,
+                channel_id,
+                datos
+            )
+
+            if resultado == "CANCEL":
+
+                return False
+
+        elif respuesta == 4:
+
+            resultado = await menu_menciones(
+                bot,
+                user_id,
+                channel_id,
+                datos
+            )
+
+            if resultado == "CANCEL":
+
+                return False
+
+        elif respuesta == 5:
+
+            resultado = await menu_apariencia(
+                bot,
+                user_id,
+                channel_id,
+                datos
+            )
+
+            if resultado == "CANCEL":
+
+                return False
+
+        elif respuesta == 6:
+
+            resultado = await menu_ubicacion(
+                bot,
+                user_id,
+                channel_id,
+                datos
+            )
+
+            if resultado == "CANCEL":
+
+                return False
+
+        elif respuesta == 7:
+
+            resultado = await menu_recordatorios(
+                bot,
+                user_id,
+                channel_id,
+                datos
+            )
+
+            if resultado == "CANCEL":
+
+                return False
+
+        elif respuesta == 8:
+
+            resultado = await menu_publicacion(
+                bot,
+                user_id,
+                channel_id,
+                datos
+            )
+
+            if resultado == "CANCEL":
+
+                return False
+
+        elif respuesta == 9:
+
+            await mostrar_vista_previa(
+                bot,
+                user_id,
+                channel_id,
+                datos
+            )
+
+        elif respuesta == 10:
+
+            resultado = await finalizar_creacion_evento(
+                bot,
+                user_id,
+                channel_id,
+                datos
+            )
+
+            if resultado:
+
+                return True
+
+        elif respuesta == 11:
+
+            await bot.get_channel(channel_id).send(
+                "❌ Creación de evento cancelada."
+            )
+
+            return False
+
+
+# ============================================================
+# INFORMACIÓN BÁSICA
+# ============================================================
+
+async def menu_informacion_basica(
+    bot,
+    user_id,
+    channel_id,
+    datos
+):
+
+    while True:
+
+        texto = (
+            "INFORMACIÓN BÁSICA\n\n"
+            "1. Cambiar título\n"
+            "2. Cambiar descripción\n"
+            "3. Volver"
+        )
+
+        respuesta = await esperar_mensaje_creacion(
+            bot,
+            user_id,
+            channel_id,
+            texto,
+            validar=lambda x: validar_numero(
+                x,
+                1,
+                3
+            )
+        )
+
+        if respuesta == "CANCEL":
+
+            return "CANCEL"
+
+        if respuesta == 3:
+
+            return
+
+        if respuesta == 1:
+
+            titulo = await esperar_mensaje_creacion(
+                bot,
+                user_id,
+                channel_id,
+                "¿Cómo se llama tu evento?\n"
+                "Se permiten 100 caracteres.",
+            )
+
+            if titulo == "CANCEL":
+
+                continue
+
+            if len(titulo) > 100:
+
+                await bot.get_channel(channel_id).send(
+                    "❌ El título supera los 100 caracteres.\n"
+                    "Vuelve a introducirlo."
+                )
+
+                continue
+
+            datos["title"] = titulo
+
+            await bot.get_channel(channel_id).send(
+                "✓ Título actualizado."
+            )
+
+        elif respuesta == 2:
+
+            descripcion = await esperar_mensaje_creacion(
+                bot,
+                user_id,
+                channel_id,
+                "Inserta la descripción del evento.\n"
+                "Escribe `None` si no quieres descripción.\n"
+                "Se permiten 2000 caracteres.",
+            )
+
+            if descripcion == "CANCEL":
+
+                continue
+
+            if descripcion.lower() == "none":
+
+                descripcion = None
+
+            elif len(descripcion) > 2000:
+
+                await bot.get_channel(channel_id).send(
+                    "❌ La descripción supera los 2000 caracteres.\n"
+                    "Vuelve a introducirla."
+                )
+
+                continue
+
+            datos["description"] = descripcion
+
+            await bot.get_channel(channel_id).send(
+                "✓ Descripción actualizada."
+            )
+
+
+# ============================================================
+# FECHA Y DURACIÓN
+# ============================================================
+
+async def menu_fecha(
+    bot,
+    user_id,
+    channel_id,
+    datos
+):
+
+    while True:
+
+        texto = (
+            "FECHA Y DURACIÓN\n\n"
+            "1. Cambiar fecha y hora\n"
+            "2. Cambiar duración\n"
+            "3. Cambiar frecuencia\n"
+            "4. Volver"
+        )
+
+        respuesta = await esperar_mensaje_creacion(
+            bot,
+            user_id,
+            channel_id,
+            texto,
+            validar=lambda x: validar_numero(
+                x,
+                1,
+                4
+            )
+        )
+
+        if respuesta == "CANCEL":
+
+            return "CANCEL"
+
+        if respuesta == 4:
+
+            return
+
+        if respuesta == 1:
+
+            fecha = await esperar_mensaje_creacion(
+                bot,
+                user_id,
+                channel_id,
+                "¿Qué día y hora será el evento?\n\n"
+                "Formato:\n"
+                "`DD/MM/YYYY HH:MM`"
+            )
+
+            if fecha == "CANCEL":
+
+                continue
+
+            try:
+
+                fecha_obj = datetime.strptime(
+                    fecha,
+                    "%d/%m/%Y %H:%M"
+                )
+
+                fecha_obj = fecha_obj.replace(
+                    tzinfo=TIMEZONE
+                )
+
+            except ValueError:
+
+                await bot.get_channel(channel_id).send(
+                    "❌ Formato incorrecto.\n"
+                    "Usa `DD/MM/YYYY HH:MM`.\n\n"
+                    "Vuelve a introducir la fecha."
+                )
+
+                continue
+
+            datos["start_time"] = fecha_obj.isoformat()
+
+            await bot.get_channel(channel_id).send(
+                "✓ Fecha actualizada."
+            )
+
+        elif respuesta == 2:
+
+            duracion = await esperar_mensaje_creacion(
+                bot,
+                user_id,
+                channel_id,
+                "¿Cuántos minutos durará el evento?"
+                "\nEjemplo: `120`",
+                validar=lambda x: validar_numero(
+                    x,
+                    1
+                )
+            )
+
+            if duracion == "CANCEL":
+
+                continue
+
+            datos["duration_minutes"] = duracion
+
+            await bot.get_channel(channel_id).send(
+                "✓ Duración actualizada."
+            )
+
+        elif respuesta == 3:
+
+            frecuencia = await esperar_mensaje_creacion(
+                bot,
+                user_id,
+                channel_id,
+                "Selecciona la frecuencia:\n\n"
+                "1. Una vez\n"
+                "2. Diariamente\n"
+                "3. Semanalmente\n"
+                "4. Mensualmente",
+                validar=lambda x: validar_numero(
+                    x,
+                    1,
+                    4
+                )
+            )
+
+            if frecuencia == "CANCEL":
+
+                continue
+
+            frecuencias = {
+                1: "Una vez",
+                2: "Diariamente",
+                3: "Semanalmente",
+                4: "Mensualmente"
+            }
+
+            datos["frequency"] = frecuencias[
+                frecuencia
+            ]
+
+            await bot.get_channel(channel_id).send(
+                "✓ Frecuencia actualizada."
+            )
+
+
+# ============================================================
+# INSCRIPCIONES
+# ============================================================
+
+async def menu_inscripciones(
+    bot,
+    user_id,
+    channel_id,
+    datos
+):
+
+    if "signup_options" not in datos:
+
+        datos["signup_options"] = []
+
+    while True:
+
+        texto = (
+            "OPCIONES DE INSCRIPCIÓN\n\n"
+            "1. Usar opciones predeterminadas\n"
+            "2. Crear opciones personalizadas\n"
+            "3. Sin opciones de inscripción\n"
+            "4. Inscripciones múltiples\n"
+            "5. Volver"
+        )
+
+        respuesta = await esperar_mensaje_creacion(
+            bot,
+            user_id,
+            channel_id,
+            texto,
+            validar=lambda x: validar_numero(
+                x,
+                1,
+                5
+            )
+        )
+
+        if respuesta == "CANCEL":
+
+            return "CANCEL"
+
+        if respuesta == 5:
+
+            return
+
+        if respuesta == 1:
+
+            datos["signup_options"] = [
+                {
+                    "name": "Aceptado",
+                    "max_slots": None
+                },
+                {
+                    "name": "Rechazado",
+                    "max_slots": None
+                },
+                {
+                    "name": "Provisional",
+                    "max_slots": None
+                }
+            ]
+
+            await bot.get_channel(channel_id).send(
+                "✓ Se han establecido las opciones "
+                "predeterminadas."
+            )
+
+        elif respuesta == 2:
+
+            resultado = await configurar_opciones_personalizadas(
+                bot,
+                user_id,
+                channel_id,
+                datos
+            )
+
+            if resultado == "CANCEL":
+
+                continue
+
+        elif respuesta == 3:
+
+            datos["signup_options"] = []
+
+            await bot.get_channel(channel_id).send(
+                "✓ Se han eliminado las opciones de inscripción."
+            )
+
+        elif respuesta == 4:
+
+            datos["multiple_registrations"] = not datos.get(
+                "multiple_registrations",
+                False
+            )
+
+            estado = (
+                "activadas"
+                if datos["multiple_registrations"]
+                else "desactivadas"
+            )
+
+            await bot.get_channel(channel_id).send(
+                f"✓ Inscripciones múltiples {estado}."
+            )
+
+
+# ============================================================
+# OPCIONES PERSONALIZADAS
+# ============================================================
+
+async def configurar_opciones_personalizadas(
+    bot,
+    user_id,
+    channel_id,
+    datos
+):
+
+    while True:
+
+        opciones = datos["signup_options"]
+
+        if opciones:
+
+            actuales = "\n".join(
+                f"{i + 1}. "
+                f"{opcion['name']} "
+                f"({'ilimitadas' if opcion['max_slots'] is None else str(opcion['max_slots']) + ' plazas'})"
+                for i, opcion in enumerate(opciones)
+            )
+
+        else:
+
+            actuales = "No se han especificado opciones."
+
+        texto = (
+            "CONFIGURAR OPCIONES DE INSCRIPCIÓN\n\n"
+            f"{actuales}\n\n"
+            "1. Añadir opción\n"
+            "2. Eliminar opción\n"
+            "3. Terminar"
+        )
+
+        respuesta = await esperar_mensaje_creacion(
+            bot,
+            user_id,
+            channel_id,
+            texto,
+            validar=lambda x: validar_numero(
+                x,
+                1,
+                3
+            )
+        )
+
+        if respuesta == "CANCEL":
+
+            return "CANCEL"
+
+        if respuesta == 3:
+
+            return
+
+        if respuesta == 1:
+
+            entrada = await esperar_mensaje_creacion(
+                bot,
+                user_id,
+                channel_id,
+                "¿Qué opción de inscripción quieres añadir?\n\n"
+                "Formato:\n"
+                "`Nombre(plazas máximas)`\n\n"
+                "Ejemplos:\n"
+                "`Tanque(2)`\n"
+                "`Sanador(3)`\n"
+                "`Daño`\n\n"
+                "Si no pones número, las plazas serán ilimitadas."
+            )
+
+            if entrada == "CANCEL":
+
+                continue
+
+            valido, resultado = validar_opciones_inscripcion(
+                entrada
+            )
+
+            if not valido:
+
+                await bot.get_channel(channel_id).send(
+                    f"❌ {resultado}\n\n"
+                    "Vuelve a introducir la opción."
+                )
+
+                continue
+
+            datos["signup_options"].extend(
+                resultado
+            )
+
+            await bot.get_channel(channel_id).send(
+                "✓ Opción añadida correctamente."
+            )
+
+        elif respuesta == 2:
+
+            if not opciones:
+
+                await bot.get_channel(channel_id).send(
+                    "No hay opciones que eliminar."
+                )
+
+                continue
+
+            numero = await esperar_mensaje_creacion(
+                bot,
+                user_id,
+                channel_id,
+                "Introduce el número de la opción "
+                "que quieres eliminar.",
+                validar=lambda x: validar_numero(
+                    x,
+                    1,
+                    len(opciones)
+                )
+            )
+
+            if numero == "CANCEL":
+
+                continue
+
+            eliminada = datos["signup_options"].pop(
+                numero - 1
+            )
+
+            await bot.get_channel(channel_id).send(
+                f"✓ Se ha eliminado `{eliminada['name']}`."
+            )
+
+
+# ============================================================
+# MENCIONES
+# ============================================================
+
+async def menu_menciones(
+    bot,
+    user_id,
+    channel_id,
+    datos
+):
+
+    while True:
+
+        texto = (
+            "MENCIONES\n\n"
+            "1. Añadir rol para mencionar\n"
+            "2. Eliminar rol\n"
+            "3. Ver roles\n"
+            "4. Volver"
+        )
+
+        respuesta = await esperar_mensaje_creacion(
+            bot,
+            user_id,
+            channel_id,
+            texto,
+            validar=lambda x: validar_numero(
+                x,
+                1,
+                4
+            )
+        )
+
+        if respuesta == "CANCEL":
+
+            return "CANCEL"
+
+        if respuesta == 4:
+
+            return
+
+        if "mention_roles" not in datos:
+
+            datos["mention_roles"] = []
+
+        if respuesta == 1:
+
+            rol_id = await esperar_mensaje_creacion(
+                bot,
+                user_id,
+                channel_id,
+                "Introduce la ID del rol que quieres mencionar.",
+                validar=lambda x: validar_numero(
+                    x,
+                    1
+                )
+            )
+
+            if rol_id == "CANCEL":
+
+                continue
+
+            if interaction_guild := bot.get_guild(
+                GUILD_ID
+            ):
+
+                rol = interaction_guild.get_role(
+                    rol_id
+                )
+
+                if rol is None:
+
+                    await bot.get_channel(channel_id).send(
+                        "❌ No encuentro ese rol."
+                    )
+
+                    continue
+
+            if rol_id not in datos["mention_roles"]:
+
+                datos["mention_roles"].append(
+                    rol_id
+                )
+
+            await bot.get_channel(channel_id).send(
+                "✓ Rol añadido."
+            )
+
+        elif respuesta == 2:
+
+            if not datos["mention_roles"]:
+
+                await bot.get_channel(channel_id).send(
+                    "No hay roles configurados."
+                )
+
+                continue
+
+            datos["mention_roles"].pop()
+
+            await bot.get_channel(channel_id).send(
+                "✓ Último rol eliminado."
+            )
+
+        elif respuesta == 3:
+
+            if not datos["mention_roles"]:
+
+                texto_roles = "No hay roles."
+
+            else:
+
+                guild = bot.get_guild(
+                    GUILD_ID
+                )
+
+                nombres = []
+
+                for role_id in datos["mention_roles"]:
+
+                    role = guild.get_role(
+                        role_id
+                    )
+
+                    nombres.append(
+                        role.name
+                        if role
+                        else f"ID {role_id}"
+                    )
+
+                texto_roles = "\n".join(
+                    f"- {nombre}"
+                    for nombre in nombres
+                )
+
+            await bot.get_channel(channel_id).send(
+                texto_roles
+            )
+
+
+# ============================================================
+# APARIENCIA
+# ============================================================
+
+async def menu_apariencia(
+    bot,
+    user_id,
+    channel_id,
+    datos
+):
+
+    while True:
+
+        texto = (
+            "APARIENCIA\n\n"
+            "1. Cambiar color\n"
+            "2. Cambiar imagen\n"
+            "3. Volver"
+        )
+
+        respuesta = await esperar_mensaje_creacion(
+            bot,
+            user_id,
+            channel_id,
+            texto,
+            validar=lambda x: validar_numero(
+                x,
+                1,
+                3
+            )
+        )
+
+        if respuesta == "CANCEL":
+
+            return "CANCEL"
+
+        if respuesta == 3:
+
+            return
+
+        if respuesta == 1:
+
+            color = await esperar_mensaje_creacion(
+                bot,
+                user_id,
+                channel_id,
+                "Introduce el color hexadecimal.\n"
+                "Ejemplo: `5865F2`"
+            )
+
+            if color == "CANCEL":
+
+                continue
+
+            color = color.replace(
+                "#",
+                ""
+            )
+
+            if len(color) != 6:
+
+                await bot.get_channel(channel_id).send(
+                    "❌ El color debe tener 6 caracteres."
+                )
+
+                continue
+
+            try:
+
+                datos["color"] = int(
+                    color,
+                    16
+                )
+
+            except ValueError:
+
+                await bot.get_channel(channel_id).send(
+                    "❌ Color hexadecimal incorrecto."
+                )
+
+                continue
+
+            await bot.get_channel(channel_id).send(
+                "✓ Color actualizado."
+            )
+
+        elif respuesta == 2:
+
+            imagen = await esperar_mensaje_creacion(
+                bot,
+                user_id,
+                channel_id,
+                "Introduce la URL de la imagen.\n"
+                "Escribe `None` para eliminarla."
+            )
+
+            if imagen == "CANCEL":
+
+                continue
+
+            if imagen.lower() == "none":
+
+                datos["image_url"] = None
+
+            else:
+
+                datos["image_url"] = imagen
+
+            await bot.get_channel(channel_id).send(
+                "✓ Imagen actualizada."
+            )
+
+
+# ============================================================
+# UBICACIÓN
+# ============================================================
+
+async def menu_ubicacion(
+    bot,
+    user_id,
+    channel_id,
+    datos
+):
+
+    ubicacion = await esperar_mensaje_creacion(
+        bot,
+        user_id,
+        channel_id,
+        "¿Dónde será el evento?\n"
+        "Escribe `None` si no quieres especificar ubicación."
+    )
+
+    if ubicacion == "CANCEL":
+
+        return "CANCEL"
+
+    if ubicacion.lower() == "none":
+
+        datos["location"] = None
+
+    else:
+
+        datos["location"] = ubicacion
+
+
+# ============================================================
+# RECORDATORIOS
+# ============================================================
+
+async def menu_recordatorios(
+    bot,
+    user_id,
+    channel_id,
+    datos
+):
+
+    while True:
+
+        texto = (
+            "RECORDATORIOS\n\n"
+            "1. Añadir recordatorio\n"
+            "2. Eliminar recordatorios\n"
+            "3. Volver"
+        )
+
+        respuesta = await esperar_mensaje_creacion(
+            bot,
+            user_id,
+            channel_id,
+            texto,
+            validar=lambda x: validar_numero(
+                x,
+                1,
+                3
+            )
+        )
+
+        if respuesta == "CANCEL":
+
+            return "CANCEL"
+
+        if respuesta == 3:
+
+            return
+
+        if respuesta == 1:
+
+            minutos = await esperar_mensaje_creacion(
+                bot,
+                user_id,
+                channel_id,
+                "¿Cuántos minutos antes quieres "
+                "enviar el recordatorio?",
+                validar=lambda x: validar_numero(
+                    x,
+                    1
+                )
+            )
+
+            if minutos == "CANCEL":
+
+                continue
+
+            if "reminders" not in datos:
+
+                datos["reminders"] = []
+
+            datos["reminders"].append(
+                minutos
+            )
+
+            await bot.get_channel(channel_id).send(
+                f"✓ Recordatorio añadido: {minutos} minutos antes."
+            )
+
+        elif respuesta == 2:
+
+            datos["reminders"] = []
+
+            await bot.get_channel(channel_id).send(
+                "✓ Recordatorios eliminados."
+            )
+
+
+# ============================================================
+# PUBLICACIÓN
+# ============================================================
+
+async def menu_publicacion(
+    bot,
+    user_id,
+    channel_id,
+    datos
+):
+
+    guild = bot.get_guild(
+        GUILD_ID
+    )
+
+    if guild is None:
+
+        await bot.get_channel(channel_id).send(
+            "❌ No puedo encontrar el servidor."
+        )
+
+        return
+
+    canales = [
+        canal
+        for canal in guild.text_channels
+    ]
+
+    texto = "CANALES DE PUBLICACIÓN\n\n"
+
+    for i, canal in enumerate(
+        canales,
+        start=1
+    ):
+
+        texto += (
+            f"{i}. {canal.mention}\n"
+        )
+
+    texto += "\n0. Volver"
+
+    respuesta = await esperar_mensaje_creacion(
+        bot,
+        user_id,
+        channel_id,
+        texto,
+        validar=lambda x: validar_numero(
+            x,
+            0,
+            len(canales)
+        )
+    )
+
+    if respuesta == "CANCEL":
+
+        return "CANCEL"
+
+    if respuesta == 0:
+
+        return
+
+    datos["publish_channel"] = canales[
+        respuesta - 1
+    ]
+
+
+# ============================================================
+# VISTA PREVIA
+# ============================================================
+
+async def mostrar_vista_previa(
+    bot,
+    user_id,
+    channel_id,
+    datos
+):
+
+    inicio = datos.get(
+        "start_time"
+    )
+
+    if inicio:
+
+        try:
+
+            fecha = datetime.fromisoformat(
+                inicio
+            )
+
+            fecha_texto = fecha.strftime(
+                "%d/%m/%Y %H:%M"
+            )
+
+        except Exception:
+
+            fecha_texto = inicio
+
+    else:
+
+        fecha_texto = "No configurada"
+
+    opciones = datos.get(
+        "signup_options",
+        []
+    )
+
+    if opciones:
+
+        opciones_texto = "\n".join(
+            f"- {o['name']} "
+            f"({'ilimitadas' if o['max_slots'] is None else str(o['max_slots']) + ' plazas'})"
+            for o in opciones
+        )
+
+    else:
+
+        opciones_texto = "Sin opciones"
+
+    texto = (
+        "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+        "          VISTA PREVIA\n"
+        "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
+        f"**{datos.get('title', 'Sin título')}**\n\n"
+        f"{datos.get('description') or 'Sin descripción'}\n\n"
+        f"Fecha: {fecha_texto}\n"
+        f"Duración: {datos.get('duration_minutes', 'No configurada')} minutos\n"
+        f"Frecuencia: {datos.get('frequency', 'Una vez')}\n"
+        f"Ubicación: {datos.get('location') or 'No especificada'}\n\n"
+        "**Inscripciones:**\n"
+        f"{opciones_texto}"
+    )
+
+    await bot.get_channel(channel_id).send(
+        texto
+    )
+
+
+# ============================================================
+# FINALIZAR
+# ============================================================
+
+async def finalizar_creacion_evento(
+    bot,
+    user_id,
+    channel_id,
+    datos
+):
+
+    obligatorios = [
+        "title",
+        "start_time"
+    ]
+
+    faltan = [
+        campo
+        for campo in obligatorios
+        if not datos.get(campo)
+    ]
+
+    if faltan:
+
+        nombres = {
+            "title": "título",
+            "start_time": "fecha"
+        }
+
+        texto = ", ".join(
+            nombres[campo]
+            for campo in faltan
+        )
+
+        await bot.get_channel(channel_id).send(
+            "❌ No puedes publicar todavía.\n\n"
+            f"Falta: {texto}.\n\n"
+            "Configura esos datos antes de publicar."
+        )
+
+        return False
+
+    confirmacion = await esperar_mensaje_creacion(
+        bot,
+        user_id,
+        channel_id,
+        "¿Quieres publicar el evento?\n\n"
+        "1. Publicar\n"
+        "2. Volver",
+        validar=lambda x: validar_numero(
+            x,
+            1,
+            2
+        )
+    )
+
+    if confirmacion == "CANCEL":
+
+        return False
+
+    if confirmacion == 2:
+
+        return False
+
+    conn = conectar_db()
+
+    try:
+
+        cursor = conn.cursor()
+
+        cursor.execute(
+            """
+            INSERT INTO eventos (
+                guild_id,
+                creator_id,
+                title,
+                description,
+                start_time,
+                duration_minutes,
+                frequency,
+                color,
+                image_url,
+                multiple_registrations,
+                created_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                GUILD_ID,
+                user_id,
+                datos["title"],
+                datos.get("description"),
+                datos["start_time"],
+                datos.get(
+                    "duration_minutes",
+                    0
+                ),
+                datos.get(
+                    "frequency",
+                    "Una vez"
+                ),
+                datos.get(
+                    "color",
+                    0x5865F2
+                ),
+                datos.get(
+                    "image_url"
+                ),
+                int(
+                    datos.get(
+                        "multiple_registrations",
+                        False
+                    )
+                ),
+                ahora().isoformat()
+            )
+        )
+
+        event_id = cursor.lastrowid
+
+        # ----------------------------------------------------
+        # OPCIONES DE INSCRIPCIÓN
+        # ----------------------------------------------------
+
+        for opcion in datos.get(
+            "signup_options",
+            []
+        ):
+
+            cursor.execute(
+                """
+                INSERT INTO opciones_inscripcion (
+                    event_id,
+                    name,
+                    emoji,
+                    max_slots
+                )
+                VALUES (?, ?, ?, ?)
+                """,
+                (
+                    event_id,
+                    opcion["name"],
+                    opcion.get("emoji"),
+                    opcion.get("max_slots")
+                )
+            )
+
+        # ----------------------------------------------------
+        # MENCIONES
+        # ----------------------------------------------------
+
+        for role_id in datos.get(
+            "mention_roles",
+            []
+        ):
+
+            cursor.execute(
+                """
+                INSERT INTO evento_menciones (
+                    event_id,
+                    role_id
+                )
+                VALUES (?, ?)
+                """,
+                (
+                    event_id,
+                    role_id
+                )
+            )
+
+        # ----------------------------------------------------
+        # RECORDATORIOS
+        # ----------------------------------------------------
+
+        for minutos in datos.get(
+            "reminders",
+            []
+        ):
+
+            cursor.execute(
+                """
+                INSERT INTO recordatorios (
+                    event_id,
+                    minutes_before,
+                    sent
+                )
+                VALUES (?, ?, 0)
+                """,
+                (
+                    event_id,
+                    minutos
+                )
+            )
+
+        conn.commit()
+
+    except Exception:
+
+        conn.rollback()
+
+        raise
+
+    finally:
+
+        conn.close()
+
+    # --------------------------------------------------------
+    # PUBLICAR
+    # --------------------------------------------------------
+
+    canal = datos.get(
+        "publish_channel"
+    )
+
+    if canal is None:
+
+        guild = bot.get_guild(
+            GUILD_ID
+        )
+
+        if guild:
+
+            canal = discord.utils.get(
+                guild.text_channels,
+                name="eventos"
+            )
+
+            if canal is None:
+
+                canal = discord.utils.get(
+                    guild.text_channels,
+                    name="general"
+                )
+
+    if canal is None:
+
+        await bot.get_channel(channel_id).send(
+            "❌ No encuentro un canal donde publicar."
+        )
+
+        return False
+
+    mensaje = await canal.send(
+        embed=crear_embed_publicado(
+            event_id
+        ),
+        view=EventoView(
+            event_id
+        )
+    )
+
+    conn = conectar_db()
+
+    try:
+
+        conn.execute(
+            """
+            UPDATE eventos
+            SET channel_id = ?,
+                message_id = ?
+            WHERE id = ?
+            """,
+            (
+                canal.id,
+                mensaje.id,
+                event_id
+            )
+        )
+
+        conn.commit()
+
+    finally:
+
+        conn.close()
+
+    await bot.get_channel(channel_id).send(
+        "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+        "       EVENTO CREADO\n"
+        "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
+        f"Tu evento ha sido publicado en {canal.mention}.\n"
+        f"ID del evento: `{event_id}`"
+    )
+
+    return True
+
+
+# ============================================================
 # /CREAR_EVENTO
 # ============================================================
 
@@ -4709,8 +6394,10 @@ async def crear_evento(
 ):
 
     # ========================================================
-    # COMPROBAR SERVIDOR
+    # COMPROBAR ROL DM
     # ========================================================
+
+    ROL_DM = 1542487680389091328
 
     if interaction.guild is None:
 
@@ -4722,177 +6409,115 @@ async def crear_evento(
 
         return
 
-    # ========================================================
-    # COMPROBAR ROL DM
-    # ========================================================
-
-    miembro = interaction.guild.get_member(
-        interaction.user.id
-    )
-
-    if miembro is None:
-
-        try:
-
-            miembro = await interaction.guild.fetch_member(
-                interaction.user.id
-            )
-
-        except (
-            discord.NotFound,
-            discord.Forbidden,
-            discord.HTTPException
-        ):
-
-            await interaction.response.send_message(
-                "No pude comprobar tus roles.",
-                ephemeral=True
-            )
-
-            return
-
-    tiene_rol_dm = any(
+    if not any(
         role.id == ROL_DM
-        for role in miembro.roles
-    )
-
-    if not tiene_rol_dm:
+        for role in interaction.user.roles
+    ):
 
         await interaction.response.send_message(
-            "No tienes permiso para crear eventos.\n\n"
-            "Solo los usuarios con el rol <@&1542487680389091328> "
-            "pueden utilizar este comando.",
+            "No tienes permiso para crear eventos.",
             ephemeral=True
         )
 
         return
 
     # ========================================================
-    # CREAR SESIÓN
+    # RESPUESTA INICIAL
+    # ========================================================
+
+    await interaction.response.send_message(
+        "Te he enviado el creador de eventos por mensaje privado.",
+        ephemeral=True
+    )
+
+    # ========================================================
+    # DATOS
     # ========================================================
 
     user_id = interaction.user.id
 
-    creaciones.pop(
-        user_id,
-        None
+    datos = {
+        "title": None,
+        "description": None,
+        "start_time": None,
+        "duration_minutes": 60,
+        "frequency": "Una vez",
+        "color": 0x5865F2,
+        "image_url": None,
+        "multiple_registrations": False,
+        "signup_options": [],
+        "mention_roles": [],
+        "reminders": [],
+        "publish_channel": None
+    }
+
+    # ========================================================
+    # CANAL POR DEFECTO
+    # ========================================================
+
+    guild = interaction.guild
+
+    canal_defecto = discord.utils.get(
+        guild.text_channels,
+        name="eventos"
     )
 
-    datos = obtener_datos(
-        user_id
-    )
+    if canal_defecto is None:
+
+        canal_defecto = discord.utils.get(
+            guild.text_channels,
+            name="general"
+        )
+
+    if canal_defecto:
+
+        datos["publish_channel"] = canal_defecto
+
+    # ========================================================
+    # DM
+    # ========================================================
 
     try:
 
-        # ----------------------------------------------------
-        # BUSCAR CANAL DE PUBLICACIÓN POR DEFECTO
-        # ----------------------------------------------------
-
-        guild = bot.get_guild(
-            GUILD_ID
-        )
-
-        if guild:
-
-            canal_defecto = discord.utils.get(
-                guild.text_channels,
-                name="eventos"
-            )
-
-            if canal_defecto is None:
-
-                canal_defecto = discord.utils.get(
-                    guild.text_channels,
-                    name="general"
-                )
-
-            if canal_defecto:
-
-                datos["publish_channel"] = (
-                    canal_defecto
-                )
-
-        # ----------------------------------------------------
-        # RESPONDER AL SLASH COMMAND
-        # ----------------------------------------------------
-
-        await interaction.response.send_message(
-            "Te he enviado el panel de creación "
-            "por mensaje privado.",
-            ephemeral=True
-        )
-
-        # ----------------------------------------------------
-        # ENVIAR PANEL AL DM
-        # ----------------------------------------------------
-
         mensaje = await interaction.user.send(
-            embed=crear_panel_embed(
-                user_id
-            ),
-            view=CrearEventoView(
-                user_id
-            )
+            "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+            "       CREACIÓN DE EVENTO\n"
+            "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
+            "Elige cada apartado escribiendo su número.\n"
+            "Puedes volver atrás en cualquier sección.\n\n"
+            "Escribe `cancel` en cualquier momento "
+            "para cancelar la creación."
         )
 
-        datos["panel_message_id"] = mensaje.id
-        datos["panel_channel_id"] = mensaje.channel.id
+        await menu_creacion_evento(
+            bot,
+            user_id,
+            mensaje.channel.id,
+            datos
+        )
 
     except discord.Forbidden:
 
-        if not interaction.response.is_done():
-
-            await interaction.response.send_message(
-                "No puedo enviarte mensajes privados. "
-                "Activa los mensajes directos "
-                "del servidor.",
-                ephemeral=True
-            )
-
-        else:
-
-            await interaction.followup.send(
-                "No puedo enviarte mensajes privados. "
-                "Activa los mensajes directos "
-                "del servidor.",
-                ephemeral=True
-            )
+        await interaction.followup.send(
+            "No puedo enviarte mensajes privados. "
+            "Activa los mensajes directos del servidor.",
+            ephemeral=True
+        )
 
     except Exception as e:
 
-        print()
         print(
-            "=========================================="
-        )
-        print(
-            "ERROR EN /CREAR_EVENTO"
-        )
-        print(
+            "ERROR EN CREACIÓN DE EVENTO:",
             repr(e)
-        )
-        print(
-            "=========================================="
         )
 
         try:
 
-            if interaction.response.is_done():
-
-                await interaction.followup.send(
-                    "Ha ocurrido un error "
-                    "al crear el evento.\n\n"
-                    f"Error: `{e}`",
-                    ephemeral=True
-                )
-
-            else:
-
-                await interaction.response.send_message(
-                    "Ha ocurrido un error "
-                    "al crear el evento.\n\n"
-                    f"Error: `{e}`",
-                    ephemeral=True
-                )
+            await interaction.followup.send(
+                "Ha ocurrido un error al iniciar "
+                "la creación del evento.",
+                ephemeral=True
+            )
 
         except Exception:
 
