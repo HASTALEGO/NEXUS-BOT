@@ -761,6 +761,543 @@ def crear_panel_embed(user_id):
 
 
 # ============================================================
+# ACTUALIZAR PANEL DE CREACIÓN
+# ============================================================
+
+async def actualizar_panel(user_id):
+
+    datos = obtener_datos(
+        user_id
+    )
+
+    # --------------------------------------------------------
+    # Comprobar que existe la sesión
+    # --------------------------------------------------------
+
+    if not datos:
+        return
+
+    # --------------------------------------------------------
+    # Obtener el canal donde está el panel
+    # --------------------------------------------------------
+
+    canal_id = datos.get(
+        "panel_channel_id"
+    )
+
+    mensaje_id = datos.get(
+        "panel_message_id"
+    )
+
+    if not canal_id or not mensaje_id:
+        return
+
+    try:
+
+        canal = bot.get_channel(
+            canal_id
+        )
+
+        if canal is None:
+
+            canal = await bot.fetch_channel(
+                canal_id
+            )
+
+        if canal is None:
+            return
+
+        # ----------------------------------------------------
+        # Obtener el mensaje existente
+        # ----------------------------------------------------
+
+        try:
+
+            mensaje = await canal.fetch_message(
+                mensaje_id
+            )
+
+        except discord.NotFound:
+
+            mensaje = None
+
+        # ----------------------------------------------------
+        # Si el mensaje ya no existe,
+        # crear uno nuevo
+        # ----------------------------------------------------
+
+        if mensaje is None:
+
+            nuevo_mensaje = await canal.send(
+                embed=crear_panel_embed(
+                    user_id
+                ),
+                view=CrearEventoView(
+                    user_id
+                )
+            )
+
+            datos["panel_message_id"] = (
+                nuevo_mensaje.id
+            )
+
+            datos["panel_channel_id"] = (
+                canal.id
+            )
+
+            return
+
+        # ----------------------------------------------------
+        # Actualizar el panel existente
+        # ----------------------------------------------------
+
+        await mensaje.edit(
+            embed=crear_panel_embed(
+                user_id
+            ),
+            view=CrearEventoView(
+                user_id
+            )
+        )
+
+    except discord.Forbidden:
+
+        print(
+            "ERROR ACTUALIZANDO PANEL: "
+            "Discord no permite acceder o editar "
+            "el mensaje."
+        )
+
+    except discord.NotFound:
+
+        print(
+            "ERROR ACTUALIZANDO PANEL: "
+            "El canal o mensaje ya no existe."
+        )
+
+    except discord.HTTPException as e:
+
+        print(
+            "ERROR HTTP ACTUALIZANDO PANEL:",
+            repr(e)
+        )
+
+    except Exception as e:
+
+        print(
+            "ERROR ACTUALIZANDO PANEL:",
+            repr(e)
+        )
+
+
+# ============================================================
+# OPCIONES DE INSCRIPCIÓN
+# ============================================================
+
+class OpcionesView(discord.ui.View):
+
+    def __init__(self, user_id):
+
+        super().__init__(
+            timeout=300
+        )
+
+        self.user_id = user_id
+
+        self.add_item(
+            discord.ui.Button(
+                label="Crear opciones",
+                style=discord.ButtonStyle.primary,
+                custom_id=f"crear_opciones_{user_id}"
+            )
+        )
+
+        self.add_item(
+            discord.ui.Button(
+                label="Opción única",
+                style=discord.ButtonStyle.secondary,
+                custom_id=f"opcion_unica_{user_id}"
+            )
+        )
+
+        # ----------------------------------------------------
+        # CALLBACK CREAR OPCIONES
+        # ----------------------------------------------------
+
+        self.children[0].callback = (
+            self.crear_opciones
+        )
+
+        # ----------------------------------------------------
+        # CALLBACK OPCIÓN ÚNICA
+        # ----------------------------------------------------
+
+        self.children[1].callback = (
+            self.opcion_unica
+        )
+
+    async def crear_opciones(
+        self,
+        interaction
+    ):
+
+        await interaction.response.send_message(
+            "Escribe las opciones de inscripción "
+            "separadas por comas.\n\n"
+            "Ejemplo:\n"
+            "`Tanque(2), DPS(5), Sanador(3)`\n\n"
+            "Para plazas ilimitadas escribe simplemente:\n"
+            "`Jugador`\n\n"
+            "También puedes indicar explícitamente:\n"
+            "`Jugador(ilimitado)`"
+        )
+
+        contenido = await esperar_mensaje(
+            interaction.user
+        )
+
+        if not contenido:
+
+            return
+
+        opciones = []
+
+        for parte in contenido.split(","):
+
+            parte = parte.strip()
+
+            if not parte:
+                continue
+
+            match = re.match(
+                r"^(.*?)\s*"
+                r"\(\s*(\d+|ilimitado)\s*\)$",
+                parte,
+                re.IGNORECASE
+            )
+
+            if match:
+
+                nombre = match.group(1).strip()
+                plazas = match.group(2).lower()
+
+                if not nombre:
+                    continue
+
+                if plazas == "ilimitado":
+
+                    max_slots = None
+
+                else:
+
+                    max_slots = int(
+                        plazas
+                    )
+
+                    if max_slots <= 0:
+                        continue
+
+            else:
+
+                nombre = parte
+                max_slots = None
+
+            opciones.append(
+                {
+                    "name": nombre[:100],
+                    "max_slots": max_slots
+                }
+            )
+
+        if not opciones:
+
+            await interaction.followup.send(
+                "No pude interpretar ninguna opción."
+            )
+
+            return
+
+        datos = obtener_datos(
+            self.user_id
+        )
+
+        datos["options"] = opciones
+
+        await interaction.followup.send(
+            "Opciones de inscripción configuradas."
+        )
+
+        await actualizar_panel(
+            self.user_id
+        )
+
+    async def opcion_unica(
+        self,
+        interaction
+    ):
+
+        datos = obtener_datos(
+            self.user_id
+        )
+
+        datos["options"] = [
+            {
+                "name": "Participantes",
+                "max_slots": None
+            }
+        ]
+
+        await interaction.response.send_message(
+            "Se ha creado una única opción: "
+            "**Participantes**."
+        )
+
+        await actualizar_panel(
+            self.user_id
+        )
+
+
+class OpcionesButton(discord.ui.Button):
+
+    def __init__(self, user_id):
+
+        self.user_id = user_id
+
+        super().__init__(
+            label="6. Opciones de inscripción",
+            style=discord.ButtonStyle.secondary
+        )
+
+    async def callback(
+        self,
+        interaction
+    ):
+
+        await interaction.response.send_message(
+            "Configura las opciones de inscripción:",
+            view=OpcionesView(
+                self.user_id
+            )
+        )
+
+# ============================================================
+# VISTA PRINCIPAL DE CREACIÓN DE EVENTOS
+# ============================================================
+
+class CrearEventoView(discord.ui.View):
+
+    def __init__(self, user_id):
+
+        super().__init__(
+            timeout=1800
+        )
+
+        datos = obtener_datos(
+            user_id
+        )
+
+        # ----------------------------------------------------
+        # 1. TÍTULO
+        # ----------------------------------------------------
+
+        if datos["title"] is None:
+
+            self.add_item(
+                CampoTextoButton(
+                    user_id,
+                    "title",
+                    1,
+                    "Título",
+                    "Escribe el título del evento.",
+                    100
+                )
+            )
+
+        # ----------------------------------------------------
+        # 2. DESCRIPCIÓN
+        # ----------------------------------------------------
+
+        if datos["description"] is None:
+
+            self.add_item(
+                CampoTextoButton(
+                    user_id,
+                    "description",
+                    2,
+                    "Descripción",
+                    "Escribe la descripción del evento.",
+                    3000
+                )
+            )
+
+        # ----------------------------------------------------
+        # 3. HORA
+        # ----------------------------------------------------
+
+        if datos["start_time"] is None:
+
+            self.add_item(
+                InicioButton(
+                    user_id
+                )
+            )
+
+        # ----------------------------------------------------
+        # 4. DURACIÓN
+        # ----------------------------------------------------
+
+        if datos["duration"] is None:
+
+            self.add_item(
+                DuracionButton(
+                    user_id
+                )
+            )
+
+        # ----------------------------------------------------
+        # 5. FRECUENCIA
+        # ----------------------------------------------------
+
+        if datos["frequency"] is None:
+
+            self.add_item(
+                FrecuenciaButton(
+                    user_id
+                )
+            )
+
+        # ----------------------------------------------------
+        # 6. OPCIONES DE INSCRIPCIÓN
+        # ----------------------------------------------------
+
+        if not datos["options"]:
+
+            self.add_item(
+                OpcionesButton(
+                    user_id
+                )
+            )
+
+        # ----------------------------------------------------
+        # 7. MENCIONES
+        # ----------------------------------------------------
+
+        if datos["mentions"] is None:
+
+            self.add_item(
+                MencionesButton(
+                    user_id
+                )
+            )
+
+        # ----------------------------------------------------
+        # 8. COLOR
+        # ----------------------------------------------------
+
+        if datos["color"] is None:
+
+            self.add_item(
+                ColorButton(
+                    user_id
+                )
+            )
+
+        # ----------------------------------------------------
+        # 9. INSCRIPCIONES MÚLTIPLES
+        # ----------------------------------------------------
+
+        if datos["multiple"] is None:
+
+            self.add_item(
+                MultiplesButton(
+                    user_id
+                )
+            )
+
+        # ----------------------------------------------------
+        # 10. RECORDATORIOS
+        # ----------------------------------------------------
+
+        if datos["reminders"] is None:
+
+            self.add_item(
+                RecordatoriosButton(
+                    user_id
+                )
+            )
+
+        # ----------------------------------------------------
+        # 11. UBICACIÓN
+        # ----------------------------------------------------
+
+        if datos["location"] is None:
+
+            self.add_item(
+                UbicacionButton(
+                    user_id
+                )
+            )
+
+        # ----------------------------------------------------
+        # 12. IMAGEN
+        # ----------------------------------------------------
+
+        if datos["image"] is None:
+
+            self.add_item(
+                ImagenButton(
+                    user_id
+                )
+            )
+
+        # ----------------------------------------------------
+        # 13. ROLES DE INSCRIPCIÓN
+        # ----------------------------------------------------
+
+        if datos["restrictions"] is None:
+
+            self.add_item(
+                RestriccionesButton(
+                    user_id
+                )
+            )
+
+        # ----------------------------------------------------
+        # 14. CANAL DE PUBLICACIÓN
+        # ----------------------------------------------------
+
+        if datos["publish_channel"] is None:
+
+            self.add_item(
+                PublicarCanalButton(
+                    user_id
+                )
+            )
+
+        # ----------------------------------------------------
+        # BOTONES FINALES
+        # ----------------------------------------------------
+
+        self.add_item(
+            PreviewButton(
+                user_id
+            )
+        )
+
+        self.add_item(
+            PublicarButton(
+                user_id
+            )
+        )
+
+        self.add_item(
+            CancelarButton(
+                user_id
+            )
+        )
+
+
+# ============================================================
 # CAMPO DE TEXTO
 # ============================================================
 
@@ -4214,34 +4751,6 @@ class RolesBloqueadosView(discord.ui.View):
         )
 
 
-@bot.tree.command(
-    guild=GUILD_OBJECT,
-    name="roles_bloqueados",
-    description="Configura los roles que no pueden participar en misiones"
-)
-async def roles_bloqueados(
-    interaction: discord.Interaction
-):
-
-    if not interaction.user.guild_permissions.administrator:
-
-        await interaction.response.send_message(
-            "No tienes permisos de administrador.",
-            ephemeral=True
-        )
-
-        return
-
-    await interaction.response.send_message(
-        "Selecciona los roles que NO podrán "
-        "participar en las misiones:",
-        view=RolesBloqueadosView(
-            interaction.guild
-        ),
-        ephemeral=True
-    )
-
-
 # ============================================================
 # CREACIÓN DE EVENTOS - SISTEMA CONVERSACIONAL
 # ============================================================
@@ -5901,7 +6410,7 @@ async def flujo_pregunta(
 
     Comandos globales:
     - cancel -> cancela toda la creación
-    - back   -> vuelve a la sección anterior
+    - reset   -> vuelve a la sección anterior
     """
 
     await usuario.send(texto)
@@ -5919,8 +6428,8 @@ async def flujo_pregunta(
     if contenido.lower() == "cancel":
         return "cancel"
 
-    if contenido.lower() == "back":
-        return "back"
+    if contenido.lower() == "reset":
+        return "reset"
 
     return contenido
 
@@ -5942,7 +6451,7 @@ async def flujo_opcion(
             texto
         )
 
-        if contenido in ("cancel", "back"):
+        if contenido in ("cancel", "reset"):
             return contenido
 
         try:
@@ -6022,7 +6531,7 @@ async def seleccionar_canal_conversacional(
         texto += (
             "\n\n"
             "Introduce el número del canal.\n"
-            "Escribe `back` para volver.\n"
+            "Escribe `reset` para volver a empezar a empezar.\n"
             "Escribe `cancel` para cancelar."
         )
 
@@ -6034,8 +6543,8 @@ async def seleccionar_canal_conversacional(
         if contenido == "cancel":
             return "cancel"
 
-        if contenido == "back":
-            return "back"
+        if contenido == "reset":
+            return "reset"
 
         try:
             numero = int(contenido)
@@ -6144,7 +6653,7 @@ async def seleccionar_roles_conversacional(
             "Puedes escribir varios números separados "
             "por comas.\n"
             "Ejemplo: `2, 4, 7`\n\n"
-            "Escribe `back` para volver.\n"
+            "Escribe `reset` para volver a empezar.\n"
             "Escribe `cancel` para cancelar."
         )
 
@@ -6156,8 +6665,8 @@ async def seleccionar_roles_conversacional(
         if contenido == "cancel":
             return "cancel"
 
-        if contenido == "back":
-            return "back"
+        if contenido == "reset":
+            return "reset"
 
         try:
 
@@ -6244,14 +6753,14 @@ async def preguntar_texto_conversacional(
             + "\n\n"
             + f"Se permiten {max_length} caracteres."
             + "\n"
-            + "Escribe `back` para volver."
+            + "Escribe `reset` para volver a empezar."
             + "\n"
             + "Escribe `cancel` para cancelar."
         )
 
         if contenido in (
             "cancel",
-            "back"
+            "reset"
         ):
 
             return contenido
@@ -6294,13 +6803,13 @@ async def preguntar_fecha_conversacional(
             "`30/08/2026 20:00`\n\n"
             "La hora se interpreta como hora de España "
             "(Europe/Madrid).\n\n"
-            "Escribe `back` para volver.\n"
+            "Escribe `reset` para volver a empezar.\n"
             "Escribe `cancel` para cancelar."
         )
 
         if contenido in (
             "cancel",
-            "back"
+            "reset"
         ):
 
             return contenido
@@ -6344,13 +6853,13 @@ async def preguntar_duracion_conversacional(
             "`2h`\n"
             "`90m`\n"
             "`2h 30m`\n\n"
-            "Escribe `back` para volver.\n"
+            "Escribe `reset` para volver a empezar.\n"
             "Escribe `cancel` para cancelar."
         )
 
         if contenido in (
             "cancel",
-            "back"
+            "reset"
         ):
 
             return contenido
@@ -6408,13 +6917,13 @@ async def preguntar_opciones_inscripcion(
             "2. Configurar opciones de inscripción\n"
             "3. Sin opciones de inscripción\n\n"
             "Introduce el número de una opción.\n"
-            "Escribe `back` para volver.\n"
+            "Escribe `reset` para volver a empezar.\n"
             "Escribe `cancel` para cancelar."
         )
 
         if contenido in (
             "cancel",
-            "back"
+            "reset"
         ):
 
             return contenido
@@ -6454,13 +6963,13 @@ async def preguntar_opciones_inscripcion(
                 "`Tanque, DPS`\n\n"
                 "También puedes usar:\n"
                 "`Tanque(ilimitado)`\n\n"
-                "Escribe `back` para volver.\n"
+                "Escribe `reset` para volver a empezar.\n"
                 "Escribe `cancel` para cancelar."
             )
 
             if contenido in (
                 "cancel",
-                "back"
+                "reset"
             ):
 
                 return contenido
@@ -6590,13 +7099,13 @@ async def preguntar_recordatorios_conversacional(
             "1. No enviar recordatorios\n"
             "2. Configurar recordatorios\n\n"
             "Introduce el número.\n"
-            "Escribe `back` para volver.\n"
+            "Escribe `reset` para volver a empezar.\n"
             "Escribe `cancel` para cancelar."
         )
 
         if contenido in (
             "cancel",
-            "back"
+            "reset"
         ):
 
             return contenido
@@ -6624,13 +7133,13 @@ async def preguntar_recordatorios_conversacional(
                 "m = minutos\n"
                 "h = horas\n"
                 "d = días\n\n"
-                "Escribe `back` para volver.\n"
+                "Escribe `reset` para volver a empezar.\n"
                 "Escribe `cancel` para cancelar."
             )
 
             if contenido in (
                 "cancel",
-                "back"
+                "reset"
             ):
 
                 return contenido
@@ -6824,7 +7333,7 @@ async def ejecutar_flujo_creacion_evento(
 
                 return
 
-            if canal == "back":
+            if canal == "reset":
 
                 continue
 
@@ -6855,7 +7364,7 @@ async def ejecutar_flujo_creacion_evento(
 
         return
 
-    if resultado == "back":
+    if resultado == "reset":
 
         return await ejecutar_flujo_creacion_evento(
             interaction
@@ -6884,7 +7393,7 @@ async def ejecutar_flujo_creacion_evento(
 
         return
 
-    if resultado == "back":
+    if resultado == "reset":
 
         return await ejecutar_flujo_creacion_evento(
             interaction
@@ -6913,7 +7422,7 @@ async def ejecutar_flujo_creacion_evento(
 
         return
 
-    if resultado == "back":
+    if resultado == "reset":
 
         return await ejecutar_flujo_creacion_evento(
             interaction
@@ -6938,7 +7447,7 @@ async def ejecutar_flujo_creacion_evento(
 
         return
 
-    if resultado == "back":
+    if resultado == "reset":
 
         return await ejecutar_flujo_creacion_evento(
             interaction
@@ -6954,7 +7463,7 @@ async def ejecutar_flujo_creacion_evento(
         "3. Semanalmente\n"
         "4. Mensualmente\n\n"
         "Introduce el número.\n"
-        "Escribe `back` para volver.\n"
+        "Escribe `reset` para volver a empezar.\n"
         "Escribe `cancel` para cancelar.",
         [
             "Una vez",
@@ -6977,7 +7486,7 @@ async def ejecutar_flujo_creacion_evento(
 
         return
 
-    if resultado == "back":
+    if resultado == "reset":
 
         return await ejecutar_flujo_creacion_evento(
             interaction
@@ -7011,7 +7520,7 @@ async def ejecutar_flujo_creacion_evento(
 
         return
 
-    if resultado == "back":
+    if resultado == "reset":
 
         return await ejecutar_flujo_creacion_evento(
             interaction
@@ -7025,7 +7534,7 @@ async def ejecutar_flujo_creacion_evento(
         "1. No, una inscripción por usuario\n"
         "2. Sí, varias inscripciones por usuario\n\n"
         "Introduce el número.\n"
-        "Escribe `back` para volver.\n"
+        "Escribe `reset` para volver a empezar.\n"
         "Escribe `cancel` para cancelar.",
         [
             "No",
@@ -7046,7 +7555,7 @@ async def ejecutar_flujo_creacion_evento(
 
         return
 
-    if resultado == "back":
+    if resultado == "reset":
 
         return await ejecutar_flujo_creacion_evento(
             interaction
@@ -7080,7 +7589,7 @@ async def ejecutar_flujo_creacion_evento(
 
         return
 
-    if resultado == "back":
+    if resultado == "reset":
 
         return await ejecutar_flujo_creacion_evento(
             interaction
@@ -7104,7 +7613,7 @@ async def ejecutar_flujo_creacion_evento(
             )
         )
         + "\n\nIntroduce el número.\n"
-        "Escribe `back` para volver.\n"
+        "Escribe `reset` para volver a empezar a empezar.\n"
         "Escribe `cancel` para cancelar.",
         list(COLORES.keys())
     )
@@ -7122,7 +7631,7 @@ async def ejecutar_flujo_creacion_evento(
 
         return
 
-    if resultado == "back":
+    if resultado == "reset":
 
         return await ejecutar_flujo_creacion_evento(
             interaction
@@ -7159,7 +7668,7 @@ async def ejecutar_flujo_creacion_evento(
 
         return
 
-    if resultado == "back":
+    if resultado == "reset":
 
         return await ejecutar_flujo_creacion_evento(
             interaction
@@ -7186,13 +7695,13 @@ async def ejecutar_flujo_creacion_evento(
             resultado = await flujo_pregunta(
                 usuario,
                 "Introduce la URL de la imagen.\n"
-                "Escribe `back` para volver.\n"
+                "Escribe `reset` para volver a empezar a empezar.\n"
                 "Escribe `cancel` para cancelar."
             )
 
             if resultado in (
                 "cancel",
-                "back"
+                "reset"
             ):
 
                 if resultado == "cancel":
@@ -7237,7 +7746,7 @@ async def ejecutar_flujo_creacion_evento(
 
         return
 
-    if resultado == "back":
+    if resultado == "reset":
 
         return await ejecutar_flujo_creacion_evento(
             interaction
@@ -7266,7 +7775,7 @@ async def ejecutar_flujo_creacion_evento(
 
         return
 
-    if resultado == "back":
+    if resultado == "reset":
 
         return await ejecutar_flujo_creacion_evento(
             interaction
@@ -7413,7 +7922,7 @@ async def ejecutar_flujo_creacion_evento(
             "Introduce el número.",
             [
                 "publicar",
-                "back",
+                "reset",
                 "cancelar"
             ]
         )
@@ -7454,7 +7963,7 @@ async def ejecutar_flujo_creacion_evento(
 
                 return
 
-            if resultado != "back":
+            if resultado != "reset":
 
                 datos["reminders"] = resultado
 
@@ -7691,7 +8200,7 @@ async def ejecutar_flujo_creacion_evento(
 
 
 # ============================================================
-# /CREAR_EVENTO - NUEVO FLUJO
+# /CREAR_EVENTO - FLUJO SECUENCIAL
 # ============================================================
 
 @bot.tree.command(
@@ -7710,7 +8219,6 @@ async def crear_evento(
             "dentro del servidor.",
             ephemeral=True
         )
-
         return
 
     miembro = interaction.guild.get_member(
@@ -7720,13 +8228,10 @@ async def crear_evento(
     if miembro is None:
 
         try:
-
             miembro = await interaction.guild.fetch_member(
                 interaction.user.id
             )
-
         except Exception:
-
             miembro = None
 
     if miembro is None:
@@ -7735,11 +8240,10 @@ async def crear_evento(
             "No pude comprobar tus roles.",
             ephemeral=True
         )
-
         return
 
     # ========================================================
-    # SOLO DM
+    # COMPROBAR PERMISO
     # ========================================================
 
     rol_dm = interaction.guild.get_role(
@@ -7752,7 +8256,6 @@ async def crear_evento(
             "No encuentro el rol DM configurado.",
             ephemeral=True
         )
-
         return
 
     if rol_dm not in miembro.roles:
@@ -7761,33 +8264,53 @@ async def crear_evento(
             "No tienes permiso para crear eventos.",
             ephemeral=True
         )
-
         return
 
     # ========================================================
-    # RESPUESTA INICIAL
+    # ABRIR DM
     # ========================================================
 
     try:
 
+        dm = await interaction.user.create_dm()
+
+    except discord.Forbidden:
+
         await interaction.response.send_message(
-            "Te he enviado la creación del evento "
-            "por mensaje privado.",
+            "No puedo abrirte los mensajes privados. "
+            "Activa los mensajes directos del servidor.",
             ephemeral=True
         )
+        return
 
-        await interaction.user.send(
-            "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-            "**CREACIÓN DE EVENTO**\n"
-            "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
-            "Vamos a configurar el evento paso a paso.\n\n"
-            "No tendrás que elegir apartados manualmente. "
-            "El bot te llevará por ellos en orden.\n\n"
-            "Puedes escribir `back` para volver a la "
-            "sección anterior.\n"
-            "Puedes escribir `cancel` para cancelar "
-            "la creación en cualquier momento."
+    except Exception as e:
+
+        print(
+            "ERROR CREANDO DM:",
+            repr(e)
         )
+
+        await interaction.response.send_message(
+            "No pude abrir tus mensajes privados.",
+            ephemeral=True
+        )
+        return
+
+    # ========================================================
+    # AVISAR EN EL SERVIDOR
+    # ========================================================
+
+    await interaction.response.send_message(
+        "Te he enviado la creación del evento "
+        "por mensaje privado.",
+        ephemeral=True
+    )
+
+    # ========================================================
+    # INICIAR FLUJO
+    # ========================================================
+
+    try:
 
         await ejecutar_flujo_creacion_evento(
             interaction
@@ -7795,42 +8318,28 @@ async def crear_evento(
 
     except discord.Forbidden:
 
-        await interaction.followup.send(
-            "No puedo enviarte mensajes privados. "
-            "Activa los mensajes directos del servidor.",
-            ephemeral=True
+        print(
+            "ERROR: Discord ha rechazado el envío del DM."
         )
 
     except Exception as e:
 
         print(
-            "ERROR EN /CREAR_EVENTO:",
+            "ERROR EN EJECUTAR_FLUJO_CREACION_EVENTO:",
             repr(e)
         )
 
         try:
 
-            if interaction.response.is_done():
-
-                await interaction.followup.send(
-                    "Ha ocurrido un error al iniciar "
-                    "la creación del evento.",
-                    ephemeral=True
-                )
-
-            else:
-
-                await interaction.response.send_message(
-                    "Ha ocurrido un error al iniciar "
-                    "la creación del evento.",
-                    ephemeral=True
-                )
+            await interaction.followup.send(
+                "Ha ocurrido un error al iniciar "
+                "la creación del evento.",
+                ephemeral=True
+            )
 
         except Exception:
-
             pass
-
-
+        
 # ============================================================
 # EJECUTAR BOT
 # ============================================================    
