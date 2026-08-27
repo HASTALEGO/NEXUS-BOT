@@ -6381,6 +6381,1949 @@ async def finalizar_creacion_evento(
 
 
 # ============================================================
+# CREACIÓN DE EVENTOS - FLUJO CONVERSACIONAL
+# ============================================================
+
+async def flujo_pregunta(
+    usuario,
+    texto
+):
+    """
+    Envía una pregunta al DM y espera la respuesta.
+
+    Comandos globales:
+    - cancel -> cancela toda la creación
+    - back   -> vuelve a la sección anterior
+    """
+
+    await usuario.send(texto)
+
+    contenido = await esperar_mensaje(
+        usuario,
+        timeout=900
+    )
+
+    if contenido is None:
+        return "cancel"
+
+    contenido = contenido.strip()
+
+    if contenido.lower() == "cancel":
+        return "cancel"
+
+    if contenido.lower() == "back":
+        return "back"
+
+    return contenido
+
+
+async def flujo_opcion(
+    usuario,
+    texto,
+    opciones,
+    permitir_back=True
+):
+    """
+    Muestra una lista numerada y espera un número válido.
+    """
+
+    while True:
+
+        contenido = await flujo_pregunta(
+            usuario,
+            texto
+        )
+
+        if contenido in ("cancel", "back"):
+            return contenido
+
+        try:
+            numero = int(contenido)
+
+        except ValueError:
+
+            await usuario.send(
+                "Respuesta no válida.\n\n"
+                "Introduce únicamente el número "
+                "de una de las opciones."
+            )
+
+            continue
+
+        if numero < 1 or numero > len(opciones):
+
+            await usuario.send(
+                "Esa opción no existe.\n\n"
+                f"Introduce un número entre 1 y {len(opciones)}."
+            )
+
+            continue
+
+        return numero
+
+
+async def seleccionar_canal_conversacional(
+    usuario,
+    guild,
+    titulo
+):
+
+    canales = [
+        canal
+        for canal in guild.text_channels
+        if not canal.is_news()
+    ]
+
+    if not canales:
+
+        await usuario.send(
+            "No hay canales de texto disponibles."
+        )
+
+        return None
+
+    pagina = 0
+    por_pagina = 15
+
+    while True:
+
+        inicio = pagina * por_pagina
+        fin = inicio + por_pagina
+
+        pagina_canales = canales[inicio:fin]
+
+        texto = (
+            f"**{titulo}**\n\n"
+        )
+
+        for numero, canal in enumerate(
+            pagina_canales,
+            start=1
+        ):
+
+            texto += (
+                f"{numero}. {canal.mention}\n"
+            )
+
+        if fin < len(canales):
+
+            texto += (
+                "\n16. Ver siguientes canales"
+            )
+
+        texto += (
+            "\n\n"
+            "Introduce el número del canal.\n"
+            "Escribe `back` para volver.\n"
+            "Escribe `cancel` para cancelar."
+        )
+
+        contenido = await flujo_pregunta(
+            usuario,
+            texto
+        )
+
+        if contenido == "cancel":
+            return "cancel"
+
+        if contenido == "back":
+            return "back"
+
+        try:
+            numero = int(contenido)
+
+        except ValueError:
+
+            await usuario.send(
+                "Introduce únicamente un número."
+            )
+
+            continue
+
+        if (
+            fin < len(canales)
+            and numero == 16
+        ):
+
+            pagina += 1
+
+            continue
+
+        if (
+            numero < 1
+            or numero > len(pagina_canales)
+        ):
+
+            await usuario.send(
+                "Ese número no corresponde "
+                "a ningún canal."
+            )
+
+            continue
+
+        return pagina_canales[
+            numero - 1
+        ]
+
+
+async def seleccionar_roles_conversacional(
+    usuario,
+    guild,
+    titulo,
+    permitir_ninguno=True
+):
+
+    roles = [
+        role
+        for role in guild.roles
+        if not role.is_default()
+        and not role.managed
+    ]
+
+    if not roles:
+
+        return []
+
+    pagina = 0
+    por_pagina = 15
+
+    while True:
+
+        inicio = pagina * por_pagina
+        fin = inicio + por_pagina
+
+        pagina_roles = roles[inicio:fin]
+
+        texto = (
+            f"**{titulo}**\n\n"
+        )
+
+        if permitir_ninguno:
+
+            texto += (
+                "1. Ninguno\n"
+            )
+
+            desplazamiento = 2
+
+        else:
+
+            desplazamiento = 1
+
+        for indice, role in enumerate(
+            pagina_roles,
+            start=desplazamiento
+        ):
+
+            texto += (
+                f"{indice}. {role.name}\n"
+            )
+
+        siguiente_numero = (
+            desplazamiento
+            + len(pagina_roles)
+        )
+
+        if fin < len(roles):
+
+            texto += (
+                f"{siguiente_numero}. "
+                "Ver siguientes roles\n"
+            )
+
+        texto += (
+            "\nIntroduce el número del rol.\n"
+            "Puedes escribir varios números separados "
+            "por comas.\n"
+            "Ejemplo: `2, 4, 7`\n\n"
+            "Escribe `back` para volver.\n"
+            "Escribe `cancel` para cancelar."
+        )
+
+        contenido = await flujo_pregunta(
+            usuario,
+            texto
+        )
+
+        if contenido == "cancel":
+            return "cancel"
+
+        if contenido == "back":
+            return "back"
+
+        try:
+
+            numeros = [
+                int(x.strip())
+                for x in contenido.split(",")
+            ]
+
+        except ValueError:
+
+            await usuario.send(
+                "Formato incorrecto.\n\n"
+                "Escribe los números separados "
+                "por comas.\n\n"
+                "Ejemplo: `2, 4, 7`"
+            )
+
+            continue
+
+        if (
+            permitir_ninguno
+            and numeros == [1]
+        ):
+
+            return []
+
+        if (
+            fin < len(roles)
+            and numeros == [siguiente_numero]
+        ):
+
+            pagina += 1
+
+            continue
+
+        roles_seleccionados = []
+
+        valido = True
+
+        for numero in numeros:
+
+            indice = numero - desplazamiento
+
+            if (
+                indice < 0
+                or indice >= len(pagina_roles)
+            ):
+
+                valido = False
+                break
+
+            role = pagina_roles[indice]
+
+            if role not in roles_seleccionados:
+
+                roles_seleccionados.append(
+                    role
+                )
+
+        if not valido:
+
+            await usuario.send(
+                "Uno de los números indicados "
+                "no corresponde a un rol válido."
+            )
+
+            continue
+
+        return roles_seleccionados
+
+
+async def preguntar_texto_conversacional(
+    usuario,
+    pregunta,
+    max_length,
+    permitir_none=False
+):
+
+    while True:
+
+        contenido = await flujo_pregunta(
+            usuario,
+            pregunta
+            + "\n\n"
+            + f"Se permiten {max_length} caracteres."
+            + "\n"
+            + "Escribe `back` para volver."
+            + "\n"
+            + "Escribe `cancel` para cancelar."
+        )
+
+        if contenido in (
+            "cancel",
+            "back"
+        ):
+
+            return contenido
+
+        if (
+            permitir_none
+            and contenido.lower() == "none"
+        ):
+
+            return None
+
+        if len(contenido) > max_length:
+
+            await usuario.send(
+                "El texto supera el límite.\n\n"
+                f"Caracteres introducidos: "
+                f"{len(contenido)}\n"
+                f"Límite: {max_length}\n\n"
+                "Vuelve a introducirlo cumpliendo "
+                "el límite de caracteres."
+            )
+
+            continue
+
+        return contenido
+
+
+async def preguntar_fecha_conversacional(
+    usuario
+):
+
+    while True:
+
+        contenido = await flujo_pregunta(
+            usuario,
+            "**¿Qué día y a qué hora será el evento?**\n\n"
+            "Formato:\n"
+            "`DD/MM/YYYY HH:MM`\n\n"
+            "Ejemplo:\n"
+            "`30/08/2026 20:00`\n\n"
+            "La hora se interpreta como hora de España "
+            "(Europe/Madrid).\n\n"
+            "Escribe `back` para volver.\n"
+            "Escribe `cancel` para cancelar."
+        )
+
+        if contenido in (
+            "cancel",
+            "back"
+        ):
+
+            return contenido
+
+        fecha = parsear_fecha(
+            contenido
+        )
+
+        if fecha is None:
+
+            await usuario.send(
+                "Formato incorrecto.\n\n"
+                "Vuelve a introducir la fecha usando:\n"
+                "`DD/MM/YYYY HH:MM`"
+            )
+
+            continue
+
+        if fecha <= ahora():
+
+            await usuario.send(
+                "La fecha debe estar en el futuro.\n\n"
+                "Vuelve a introducirla."
+            )
+
+            continue
+
+        return fecha
+
+
+async def preguntar_duracion_conversacional(
+    usuario
+):
+
+    while True:
+
+        contenido = await flujo_pregunta(
+            usuario,
+            "**¿Cuánto durará el evento?**\n\n"
+            "Ejemplos:\n"
+            "`2h`\n"
+            "`90m`\n"
+            "`2h 30m`\n\n"
+            "Escribe `back` para volver.\n"
+            "Escribe `cancel` para cancelar."
+        )
+
+        if contenido in (
+            "cancel",
+            "back"
+        ):
+
+            return contenido
+
+        contenido = contenido.lower()
+
+        horas = re.search(
+            r"(\d+)\s*h",
+            contenido
+        )
+
+        minutos = re.search(
+            r"(\d+)\s*m",
+            contenido
+        )
+
+        total = 0
+
+        if horas:
+
+            total += (
+                int(horas.group(1))
+                * 60
+            )
+
+        if minutos:
+
+            total += int(
+                minutos.group(1)
+            )
+
+        if total <= 0:
+
+            await usuario.send(
+                "Duración incorrecta.\n\n"
+                "Ejemplo: `2h 30m`\n\n"
+                "Vuelve a introducirla."
+            )
+
+            continue
+
+        return total
+
+
+async def preguntar_opciones_inscripcion(
+    usuario
+):
+
+    while True:
+
+        contenido = await flujo_pregunta(
+            usuario,
+            "**¿Cómo funcionarán las inscripciones?**\n\n"
+            "1. Usar una opción predeterminada\n"
+            "2. Configurar opciones de inscripción\n"
+            "3. Sin opciones de inscripción\n\n"
+            "Introduce el número de una opción.\n"
+            "Escribe `back` para volver.\n"
+            "Escribe `cancel` para cancelar."
+        )
+
+        if contenido in (
+            "cancel",
+            "back"
+        ):
+
+            return contenido
+
+        if contenido == "1":
+
+            return [
+                {
+                    "name": "Aceptado",
+                    "emoji": "",
+                    "max_slots": None
+                }
+            ]
+
+        if contenido == "3":
+
+            return []
+
+        if contenido != "2":
+
+            await usuario.send(
+                "Introduce `1`, `2` o `3`."
+            )
+
+            continue
+
+        while True:
+
+            contenido = await flujo_pregunta(
+                usuario,
+                "**Configurar opciones de inscripción**\n\n"
+                "Introduce las opciones con este formato:\n\n"
+                "`Nombre(plazas máximas), Nombre(plazas máximas)`\n\n"
+                "Ejemplo:\n"
+                "`Tanque(2), DPS(5), Sanador(3)`\n\n"
+                "Para plazas ilimitadas:\n"
+                "`Tanque, DPS`\n\n"
+                "También puedes usar:\n"
+                "`Tanque(ilimitado)`\n\n"
+                "Escribe `back` para volver.\n"
+                "Escribe `cancel` para cancelar."
+            )
+
+            if contenido in (
+                "cancel",
+                "back"
+            ):
+
+                return contenido
+
+            partes = contenido.split(",")
+
+            opciones = []
+            errores = []
+
+            for parte in partes:
+
+                parte = parte.strip()
+
+                if not parte:
+                    continue
+
+                match = re.fullmatch(
+                    r"\s*(.+?)\s*"
+                    r"(?:\(\s*(\d+|ilimitado)\s*\))?"
+                    r"\s*",
+                    parte,
+                    re.IGNORECASE
+                )
+
+                if not match:
+
+                    errores.append(
+                        parte
+                    )
+
+                    continue
+
+                nombre = (
+                    match.group(1)
+                    .strip()
+                )
+
+                plazas_raw = (
+                    match.group(2)
+                )
+
+                if not nombre:
+
+                    errores.append(
+                        parte
+                    )
+
+                    continue
+
+                if len(nombre) > 100:
+
+                    errores.append(
+                        f"{nombre[:30]}..."
+                        " (nombre demasiado largo)"
+                    )
+
+                    continue
+
+                if plazas_raw is None:
+
+                    max_slots = None
+
+                elif (
+                    plazas_raw.lower()
+                    == "ilimitado"
+                ):
+
+                    max_slots = None
+
+                else:
+
+                    max_slots = int(
+                        plazas_raw
+                    )
+
+                    if max_slots <= 0:
+
+                        errores.append(
+                            parte
+                        )
+
+                        continue
+
+                opciones.append(
+                    {
+                        "name": nombre,
+                        "emoji": "",
+                        "max_slots": max_slots
+                    }
+                )
+
+            if errores:
+
+                await usuario.send(
+                    "No pude interpretar algunas opciones.\n\n"
+                    "Formato correcto:\n"
+                    "`Tanque(2), DPS(5), Sanador(3)`\n\n"
+                    "Para ilimitadas:\n"
+                    "`Tanque, DPS`\n\n"
+                    "Vuelve a introducir las opciones "
+                    "cumpliendo el formato."
+                )
+
+                continue
+
+            if not opciones:
+
+                await usuario.send(
+                    "No has introducido ninguna opción válida.\n\n"
+                    "Vuelve a introducirlas."
+                )
+
+                continue
+
+            return opciones
+
+
+async def preguntar_recordatorios_conversacional(
+    usuario
+):
+
+    while True:
+
+        contenido = await flujo_pregunta(
+            usuario,
+            "**¿Quieres enviar recordatorios?**\n\n"
+            "1. No enviar recordatorios\n"
+            "2. Configurar recordatorios\n\n"
+            "Introduce el número.\n"
+            "Escribe `back` para volver.\n"
+            "Escribe `cancel` para cancelar."
+        )
+
+        if contenido in (
+            "cancel",
+            "back"
+        ):
+
+            return contenido
+
+        if contenido == "1":
+
+            return []
+
+        if contenido != "2":
+
+            await usuario.send(
+                "Introduce `1` o `2`."
+            )
+
+            continue
+
+        while True:
+
+            contenido = await flujo_pregunta(
+                usuario,
+                "**Introduce los recordatorios.**\n\n"
+                "Puedes usar:\n"
+                "`7d, 24h, 1h, 30m`\n\n"
+                "Unidades:\n"
+                "m = minutos\n"
+                "h = horas\n"
+                "d = días\n\n"
+                "Escribe `back` para volver.\n"
+                "Escribe `cancel` para cancelar."
+            )
+
+            if contenido in (
+                "cancel",
+                "back"
+            ):
+
+                return contenido
+
+            recordatorios = []
+
+            for parte in contenido.split(","):
+
+                parte = parte.strip().lower()
+
+                match = re.fullmatch(
+                    r"(\d+)\s*"
+                    r"(m|min|h|hora|horas|d|dia|dias|día|días)",
+                    parte
+                )
+
+                if not match:
+                    continue
+
+                cantidad = int(
+                    match.group(1)
+                )
+
+                unidad = match.group(2)
+
+                if unidad.startswith("m"):
+
+                    minutos = cantidad
+
+                elif unidad.startswith("h"):
+
+                    minutos = cantidad * 60
+
+                else:
+
+                    minutos = cantidad * 1440
+
+                if minutos > 0:
+
+                    recordatorios.append(
+                        minutos
+                    )
+
+            if not recordatorios:
+
+                await usuario.send(
+                    "No pude interpretar ningún recordatorio.\n\n"
+                    "Vuelve a introducirlos usando, por ejemplo:\n"
+                    "`7d, 24h, 1h, 30m`"
+                )
+
+                continue
+
+            return sorted(
+                set(recordatorios),
+                reverse=True
+            )
+
+
+async def ejecutar_flujo_creacion_evento(
+    interaction
+):
+
+    usuario = interaction.user
+    guild = interaction.guild
+
+    if guild is None:
+
+        return
+
+    user_id = usuario.id
+
+    creaciones.pop(
+        user_id,
+        None
+    )
+
+    datos = obtener_datos(
+        user_id
+    )
+
+    # ========================================================
+    # CANAL DE PUBLICACIÓN
+    # ========================================================
+
+    canal_actual = interaction.channel
+
+    if isinstance(
+        canal_actual,
+        discord.TextChannel
+    ):
+
+        canal_defecto = canal_actual
+
+    else:
+
+        canal_defecto = discord.utils.get(
+            guild.text_channels,
+            name="eventos"
+        )
+
+        if canal_defecto is None:
+
+            canal_defecto = discord.utils.get(
+                guild.text_channels,
+                name="general"
+            )
+
+    while True:
+
+        texto = (
+            "**¿Dónde quieres publicar el evento?**\n\n"
+        )
+
+        if canal_defecto:
+
+            texto += (
+                f"1. En el canal actual "
+                f"{canal_defecto.mention}\n"
+            )
+
+        else:
+
+            texto += (
+                "1. En el canal predeterminado\n"
+            )
+
+        texto += (
+            "2. En otro canal\n\n"
+            "Introduce el número de una opción.\n"
+            "Escribe `cancel` para cancelar."
+        )
+
+        resultado = await flujo_opcion(
+            usuario,
+            texto,
+            [
+                "actual",
+                "otro"
+            ]
+        )
+
+        if resultado == "cancel":
+
+            creaciones.pop(
+                user_id,
+                None
+            )
+
+            await usuario.send(
+                "Creación del evento cancelada."
+            )
+
+            return
+
+        if resultado == 1:
+
+            if canal_defecto is None:
+
+                await usuario.send(
+                    "No pude encontrar un canal "
+                    "predeterminado."
+                )
+
+                continue
+
+            datos["publish_channel"] = (
+                canal_defecto
+            )
+
+            break
+
+        if resultado == 2:
+
+            canal = await seleccionar_canal_conversacional(
+                usuario,
+                guild,
+                "¿En qué canal quieres publicar el evento?"
+            )
+
+            if canal == "cancel":
+
+                creaciones.pop(
+                    user_id,
+                    None
+                )
+
+                await usuario.send(
+                    "Creación del evento cancelada."
+                )
+
+                return
+
+            if canal == "back":
+
+                continue
+
+            datos["publish_channel"] = canal
+
+            break
+
+    # ========================================================
+    # SECCIÓN 1 - INFORMACIÓN BÁSICA
+    # ========================================================
+
+    resultado = await preguntar_texto_conversacional(
+        usuario,
+        "**¿Cómo se llama tu evento?**",
+        100
+    )
+
+    if resultado == "cancel":
+
+        creaciones.pop(
+            user_id,
+            None
+        )
+
+        await usuario.send(
+            "Creación del evento cancelada."
+        )
+
+        return
+
+    if resultado == "back":
+
+        return await ejecutar_flujo_creacion_evento(
+            interaction
+        )
+
+    datos["title"] = resultado
+
+    resultado = await preguntar_texto_conversacional(
+        usuario,
+        "**Inserta la descripción del evento.**\n"
+        "Escribe `None` si no quieres descripción.",
+        3000,
+        permitir_none=True
+    )
+
+    if resultado == "cancel":
+
+        creaciones.pop(
+            user_id,
+            None
+        )
+
+        await usuario.send(
+            "Creación del evento cancelada."
+        )
+
+        return
+
+    if resultado == "back":
+
+        return await ejecutar_flujo_creacion_evento(
+            interaction
+        )
+
+    datos["description"] = resultado
+
+    # ========================================================
+    # SECCIÓN 2 - FECHA Y DURACIÓN
+    # ========================================================
+
+    resultado = await preguntar_fecha_conversacional(
+        usuario
+    )
+
+    if resultado == "cancel":
+
+        creaciones.pop(
+            user_id,
+            None
+        )
+
+        await usuario.send(
+            "Creación del evento cancelada."
+        )
+
+        return
+
+    if resultado == "back":
+
+        return await ejecutar_flujo_creacion_evento(
+            interaction
+        )
+
+    datos["start_time"] = resultado
+
+    resultado = await preguntar_duracion_conversacional(
+        usuario
+    )
+
+    if resultado == "cancel":
+
+        creaciones.pop(
+            user_id,
+            None
+        )
+
+        await usuario.send(
+            "Creación del evento cancelada."
+        )
+
+        return
+
+    if resultado == "back":
+
+        return await ejecutar_flujo_creacion_evento(
+            interaction
+        )
+
+    datos["duration"] = resultado
+
+    resultado = await flujo_opcion(
+        usuario,
+        "**¿Será un evento recurrente?**\n\n"
+        "1. Una vez\n"
+        "2. Diariamente\n"
+        "3. Semanalmente\n"
+        "4. Mensualmente\n\n"
+        "Introduce el número.\n"
+        "Escribe `back` para volver.\n"
+        "Escribe `cancel` para cancelar.",
+        [
+            "Una vez",
+            "Diariamente",
+            "Semanalmente",
+            "Mensualmente"
+        ]
+    )
+
+    if resultado == "cancel":
+
+        creaciones.pop(
+            user_id,
+            None
+        )
+
+        await usuario.send(
+            "Creación del evento cancelada."
+        )
+
+        return
+
+    if resultado == "back":
+
+        return await ejecutar_flujo_creacion_evento(
+            interaction
+        )
+
+    datos["frequency"] = [
+        "Una vez",
+        "Diariamente",
+        "Semanalmente",
+        "Mensualmente"
+    ][resultado - 1]
+
+    # ========================================================
+    # SECCIÓN 3 - INSCRIPCIONES
+    # ========================================================
+
+    resultado = await preguntar_opciones_inscripcion(
+        usuario
+    )
+
+    if resultado == "cancel":
+
+        creaciones.pop(
+            user_id,
+            None
+        )
+
+        await usuario.send(
+            "Creación del evento cancelada."
+        )
+
+        return
+
+    if resultado == "back":
+
+        return await ejecutar_flujo_creacion_evento(
+            interaction
+        )
+
+    datos["options"] = resultado
+
+    resultado = await flujo_opcion(
+        usuario,
+        "**¿Se permiten inscripciones múltiples?**\n\n"
+        "1. No, una inscripción por usuario\n"
+        "2. Sí, varias inscripciones por usuario\n\n"
+        "Introduce el número.\n"
+        "Escribe `back` para volver.\n"
+        "Escribe `cancel` para cancelar.",
+        [
+            "No",
+            "Sí"
+        ]
+    )
+
+    if resultado == "cancel":
+
+        creaciones.pop(
+            user_id,
+            None
+        )
+
+        await usuario.send(
+            "Creación del evento cancelada."
+        )
+
+        return
+
+    if resultado == "back":
+
+        return await ejecutar_flujo_creacion_evento(
+            interaction
+        )
+
+    datos["multiple"] = (
+        resultado == 2
+    )
+
+    # ========================================================
+    # SECCIÓN 4 - MENCIONES
+    # ========================================================
+
+    resultado = await seleccionar_roles_conversacional(
+        usuario,
+        guild,
+        "¿Qué roles quieres mencionar?",
+        permitir_ninguno=True
+    )
+
+    if resultado == "cancel":
+
+        creaciones.pop(
+            user_id,
+            None
+        )
+
+        await usuario.send(
+            "Creación del evento cancelada."
+        )
+
+        return
+
+    if resultado == "back":
+
+        return await ejecutar_flujo_creacion_evento(
+            interaction
+        )
+
+    datos["mentions"] = resultado
+
+    # ========================================================
+    # SECCIÓN 5 - APARIENCIA
+    # ========================================================
+
+    resultado = await flujo_opcion(
+        usuario,
+        "**¿Qué color quieres para el evento?**\n\n"
+        + "\n".join(
+            f"{numero}. {nombre}"
+            for numero, nombre
+            in enumerate(
+                COLORES.keys(),
+                start=1
+            )
+        )
+        + "\n\nIntroduce el número.\n"
+        "Escribe `back` para volver.\n"
+        "Escribe `cancel` para cancelar.",
+        list(COLORES.keys())
+    )
+
+    if resultado == "cancel":
+
+        creaciones.pop(
+            user_id,
+            None
+        )
+
+        await usuario.send(
+            "Creación del evento cancelada."
+        )
+
+        return
+
+    if resultado == "back":
+
+        return await ejecutar_flujo_creacion_evento(
+            interaction
+        )
+
+    color_nombre = list(
+        COLORES.keys()
+    )[resultado - 1]
+
+    datos["color_name"] = color_nombre
+    datos["color"] = COLORES[
+        color_nombre
+    ]
+
+    resultado = await preguntar_texto_conversacional(
+        usuario,
+        "**¿Quieres añadir una imagen al evento?**\n\n"
+        "Escribe la URL de la imagen.\n"
+        "Escribe `None` si no quieres imagen.",
+        2048,
+        permitir_none=True
+    )
+
+    if resultado == "cancel":
+
+        creaciones.pop(
+            user_id,
+            None
+        )
+
+        await usuario.send(
+            "Creación del evento cancelada."
+        )
+
+        return
+
+    if resultado == "back":
+
+        return await ejecutar_flujo_creacion_evento(
+            interaction
+        )
+
+    if resultado is None:
+
+        datos["image"] = ""
+
+    else:
+
+        while not (
+            resultado.startswith("http://")
+            or resultado.startswith("https://")
+        ):
+
+            await usuario.send(
+                "La URL no parece válida.\n\n"
+                "Debe comenzar por `http://` "
+                "o `https://`.\n\n"
+                "Vuelve a introducirla."
+            )
+
+            resultado = await flujo_pregunta(
+                usuario,
+                "Introduce la URL de la imagen.\n"
+                "Escribe `back` para volver.\n"
+                "Escribe `cancel` para cancelar."
+            )
+
+            if resultado in (
+                "cancel",
+                "back"
+            ):
+
+                if resultado == "cancel":
+
+                    creaciones.pop(
+                        user_id,
+                        None
+                    )
+
+                    await usuario.send(
+                        "Creación del evento cancelada."
+                    )
+
+                    return
+
+                return await ejecutar_flujo_creacion_evento(
+                    interaction
+                )
+
+        datos["image"] = resultado
+
+    # ========================================================
+    # SECCIÓN 6 - UBICACIÓN
+    # ========================================================
+
+    resultado = await seleccionar_canal_conversacional(
+        usuario,
+        guild,
+        "¿Dónde se realizará el evento?"
+    )
+
+    if resultado == "cancel":
+
+        creaciones.pop(
+            user_id,
+            None
+        )
+
+        await usuario.send(
+            "Creación del evento cancelada."
+        )
+
+        return
+
+    if resultado == "back":
+
+        return await ejecutar_flujo_creacion_evento(
+            interaction
+        )
+
+    datos["location"] = resultado
+
+    # ========================================================
+    # SECCIÓN 7 - RECORDATORIOS
+    # ========================================================
+
+    resultado = await preguntar_recordatorios_conversacional(
+        usuario
+    )
+
+    if resultado == "cancel":
+
+        creaciones.pop(
+            user_id,
+            None
+        )
+
+        await usuario.send(
+            "Creación del evento cancelada."
+        )
+
+        return
+
+    if resultado == "back":
+
+        return await ejecutar_flujo_creacion_evento(
+            interaction
+        )
+
+    datos["reminders"] = resultado
+
+    # ========================================================
+    # VISTA PREVIA
+    # ========================================================
+
+    embed = discord.Embed(
+        title=(
+            datos["title"]
+            or "Evento sin título"
+        ),
+        description=(
+            datos["description"]
+            or "Sin descripción"
+        ),
+        color=discord.Color(
+            datos["color"]
+            or 0x5865F2
+        )
+    )
+
+    if datos["start_time"]:
+
+        embed.add_field(
+            name="Hora de inicio",
+            value=(
+                f"<t:{timestamp_discord(datos['start_time'])}:F>"
+            ),
+            inline=False
+        )
+
+    if datos["duration"]:
+
+        embed.add_field(
+            name="Duración",
+            value=formatear_duracion(
+                datos["duration"]
+            )
+        )
+
+    embed.add_field(
+        name="Frecuencia",
+        value=datos["frequency"]
+    )
+
+    if datos["publish_channel"]:
+
+        embed.add_field(
+            name="Canal de publicación",
+            value=datos["publish_channel"].mention
+        )
+
+    if datos["location"]:
+
+        embed.add_field(
+            name="Ubicación",
+            value=datos["location"].mention
+        )
+
+    if datos["options"]:
+
+        opciones_texto = []
+
+        for opcion in datos["options"]:
+
+            if opcion["max_slots"]:
+
+                opciones_texto.append(
+                    f"{opcion['name']} "
+                    f"({opcion['max_slots']} plazas)"
+                )
+
+            else:
+
+                opciones_texto.append(
+                    f"{opcion['name']} "
+                    "(ilimitado)"
+                )
+
+        embed.add_field(
+            name="Inscripciones",
+            value="\n".join(
+                opciones_texto
+            )[:1024],
+            inline=False
+        )
+
+    if datos["mentions"]:
+
+        embed.add_field(
+            name="Menciones",
+            value=" ".join(
+                role.mention
+                for role in datos["mentions"]
+            ),
+            inline=False
+        )
+
+    embed.add_field(
+        name="Color",
+        value=datos["color_name"]
+    )
+
+    embed.add_field(
+        name="Inscripciones múltiples",
+        value=(
+            "Sí"
+            if datos["multiple"]
+            else "No"
+        )
+    )
+
+    embed.add_field(
+        name="Recordatorios",
+        value=formatear_recordatorios(
+            datos["reminders"]
+        )
+    )
+
+    if datos["image"]:
+
+        embed.set_image(
+            url=datos["image"]
+        )
+
+    while True:
+
+        await usuario.send(
+            "**VISTA PREVIA DEL EVENTO**",
+            embed=embed
+        )
+
+        resultado = await flujo_opcion(
+            usuario,
+            "¿Qué quieres hacer?\n\n"
+            "1. Publicar evento\n"
+            "2. Volver a recordatorios\n"
+            "3. Cancelar creación\n\n"
+            "Introduce el número.",
+            [
+                "publicar",
+                "back",
+                "cancelar"
+            ]
+        )
+
+        if resultado == 1:
+
+            break
+
+        if resultado == 3:
+
+            creaciones.pop(
+                user_id,
+                None
+            )
+
+            await usuario.send(
+                "Creación del evento cancelada."
+            )
+
+            return
+
+        if resultado == 2:
+
+            resultado = await preguntar_recordatorios_conversacional(
+                usuario
+            )
+
+            if resultado == "cancel":
+
+                creaciones.pop(
+                    user_id,
+                    None
+                )
+
+                await usuario.send(
+                    "Creación del evento cancelada."
+                )
+
+                return
+
+            if resultado != "back":
+
+                datos["reminders"] = resultado
+
+            continue
+
+    # ========================================================
+    # PUBLICAR
+    # ========================================================
+
+    try:
+
+        canal = datos["publish_channel"]
+
+        if canal is None:
+
+            await usuario.send(
+                "No se ha configurado un canal de publicación."
+            )
+
+            return
+
+        conn = conectar_db()
+
+        cursor = conn.cursor()
+
+        cursor.execute(
+            """
+            INSERT INTO eventos (
+                guild_id,
+                channel_id,
+                creator_id,
+                title,
+                description,
+                start_time,
+                duration_minutes,
+                frequency,
+                color,
+                location_channel_id,
+                image_url,
+                multiple_registrations,
+                created_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                guild.id,
+                canal.id,
+                user_id,
+                datos["title"],
+                datos["description"],
+                datos["start_time"].isoformat(),
+                datos["duration"],
+                datos["frequency"],
+                datos["color"],
+                datos["location"].id,
+                datos["image"],
+                (
+                    1
+                    if datos["multiple"]
+                    else 0
+                ),
+                ahora().isoformat()
+            )
+        )
+
+        evento_id = cursor.lastrowid
+
+        for opcion in datos["options"]:
+
+            cursor.execute(
+                """
+                INSERT INTO opciones_inscripcion (
+                    event_id,
+                    name,
+                    emoji,
+                    max_slots
+                )
+                VALUES (?, ?, ?, ?)
+                """,
+                (
+                    evento_id,
+                    opcion["name"],
+                    opcion.get("emoji", ""),
+                    opcion["max_slots"]
+                )
+            )
+
+        for role in datos["mentions"]:
+
+            cursor.execute(
+                """
+                INSERT INTO evento_menciones (
+                    event_id,
+                    role_id
+                )
+                VALUES (?, ?)
+                """,
+                (
+                    evento_id,
+                    role.id
+                )
+            )
+
+        for minutos in datos["reminders"]:
+
+            cursor.execute(
+                """
+                INSERT INTO recordatorios (
+                    event_id,
+                    minutes_before
+                )
+                VALUES (?, ?)
+                """,
+                (
+                    evento_id,
+                    minutos
+                )
+            )
+
+        conn.commit()
+        conn.close()
+
+        # ----------------------------------------------------
+        # CREAR EMBED
+        # ----------------------------------------------------
+
+        embed = crear_embed_publicado(
+            evento_id
+        )
+
+        # ----------------------------------------------------
+        # MENCIONES
+        # ----------------------------------------------------
+
+        menciones = ""
+
+        if datos["mentions"]:
+
+            menciones = " ".join(
+                role.mention
+                for role in datos["mentions"]
+            )
+
+        # ----------------------------------------------------
+        # VIEW
+        # ----------------------------------------------------
+
+        view = EventoView(
+            evento_id
+        )
+
+        mensaje = await canal.send(
+            content=(
+                menciones
+                if menciones
+                else None
+            ),
+            embed=embed,
+            view=view,
+            allowed_mentions=discord.AllowedMentions(
+                roles=True
+            )
+        )
+
+        # ----------------------------------------------------
+        # GUARDAR MESSAGE ID
+        # ----------------------------------------------------
+
+        conn = conectar_db()
+
+        conn.execute(
+            """
+            UPDATE eventos
+            SET message_id = ?
+            WHERE id = ?
+            """,
+            (
+                mensaje.id,
+                evento_id
+            )
+        )
+
+        conn.commit()
+        conn.close()
+
+        # ----------------------------------------------------
+        # VIEW PERSISTENTE
+        # ----------------------------------------------------
+
+        bot.add_view(
+            EventoView(
+                evento_id
+            )
+        )
+
+        creaciones.pop(
+            user_id,
+            None
+        )
+
+        await usuario.send(
+            "Evento publicado correctamente en "
+            f"{canal.mention}."
+        )
+
+    except Exception as e:
+
+        import traceback
+
+        print()
+        print(
+            "=================================================="
+        )
+
+        print(
+            "ERROR PUBLICANDO EVENTO"
+        )
+
+        print(
+            repr(e)
+        )
+
+        traceback.print_exc()
+
+        print(
+            "=================================================="
+        )
+
+        await usuario.send(
+            "Ha ocurrido un error al publicar "
+            "el evento.\n\n"
+            f"Error: `{e}`"
+        )
+
+
+# ============================================================
+# /CREAR_EVENTO - NUEVO FLUJO
+# ============================================================
+
+@bot.tree.command(
+    guild=GUILD_OBJECT,
+    name="crear_evento",
+    description="Crea un nuevo evento"
+)
+async def crear_evento(
+    interaction: discord.Interaction
+):
+
+    if interaction.guild is None:
+
+        await interaction.response.send_message(
+            "Este comando solamente puede utilizarse "
+            "dentro del servidor.",
+            ephemeral=True
+        )
+
+        return
+
+    miembro = interaction.guild.get_member(
+        interaction.user.id
+    )
+
+    if miembro is None:
+
+        try:
+
+            miembro = await interaction.guild.fetch_member(
+                interaction.user.id
+            )
+
+        except Exception:
+
+            miembro = None
+
+    if miembro is None:
+
+        await interaction.response.send_message(
+            "No pude comprobar tus roles.",
+            ephemeral=True
+        )
+
+        return
+
+    # ========================================================
+    # SOLO DM
+    # ========================================================
+
+    rol_dm = interaction.guild.get_role(
+        ROL_DM
+    )
+
+    if rol_dm is None:
+
+        await interaction.response.send_message(
+            "No encuentro el rol DM configurado.",
+            ephemeral=True
+        )
+
+        return
+
+    if rol_dm not in miembro.roles:
+
+        await interaction.response.send_message(
+            "No tienes permiso para crear eventos.",
+            ephemeral=True
+        )
+
+        return
+
+    # ========================================================
+    # RESPUESTA INICIAL
+    # ========================================================
+
+    try:
+
+        await interaction.response.send_message(
+            "Te he enviado la creación del evento "
+            "por mensaje privado.",
+            ephemeral=True
+        )
+
+        await interaction.user.send(
+            "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+            "**CREACIÓN DE EVENTO**\n"
+            "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
+            "Vamos a configurar el evento paso a paso.\n\n"
+            "No tendrás que elegir apartados manualmente. "
+            "El bot te llevará por ellos en orden.\n\n"
+            "Puedes escribir `back` para volver a la "
+            "sección anterior.\n"
+            "Puedes escribir `cancel` para cancelar "
+            "la creación en cualquier momento."
+        )
+
+        await ejecutar_flujo_creacion_evento(
+            interaction
+        )
+
+    except discord.Forbidden:
+
+        await interaction.followup.send(
+            "No puedo enviarte mensajes privados. "
+            "Activa los mensajes directos del servidor.",
+            ephemeral=True
+        )
+
+    except Exception as e:
+
+        print(
+            "ERROR EN /CREAR_EVENTO:",
+            repr(e)
+        )
+
+        try:
+
+            if interaction.response.is_done():
+
+                await interaction.followup.send(
+                    "Ha ocurrido un error al iniciar "
+                    "la creación del evento.",
+                    ephemeral=True
+                )
+
+            else:
+
+                await interaction.response.send_message(
+                    "Ha ocurrido un error al iniciar "
+                    "la creación del evento.",
+                    ephemeral=True
+                )
+
+        except Exception:
+
+            pass
+
+
+# ============================================================
 # /CREAR_EVENTO
 # ============================================================
 
