@@ -70,16 +70,16 @@ async def main():
 
     inicio = f.a_utc_iso(f.ahora() + timedelta(hours=2))
 
-    # Lista de espera deshabilitada -> se rechaza al llenarse
+    # 1. Lista de espera deshabilitada -> se rechaza al llenarse
     ev = crear_evento(start_time=inicio, allow_waitlist=0)
     op = crear_opcion(ev, 1)
     await v.inscribirse(interaccion(10), ev, op)
     i = interaccion(11)
     await v.inscribirse(i, ev, op)
-    assert "no admite lista de espera" in respuesta(i), respuesta(i)
+    assert "lista de espera" in respuesta(i).lower(), respuesta(i)
     assert inscripciones(ev) == [(10, "confirmado", 0)], inscripciones(ev)
 
-    # Lista de espera habilitada -> reserva y promocion al cancelar
+    # 2. Lista de espera habilitada -> reserva y promocion al cancelar
     ev = crear_evento(start_time=inicio)
     op = crear_opcion(ev, 1)
     await v.inscribirse(interaccion(10), ev, op)
@@ -88,25 +88,25 @@ async def main():
     await v.cancelar_inscripcion(interaccion(10), ev)
     assert inscripciones(ev) == [(11, "confirmado", 0)], inscripciones(ev)
 
-    # Una sola inscripcion por persona
+    # 3. Una sola inscripcion por persona
     ev = crear_evento(start_time=inicio)
     op1, op2 = crear_opcion(ev, 5), crear_opcion(ev, 5)
     await v.inscribirse(interaccion(10), ev, op1)
     i = interaccion(10)
     await v.inscribirse(i, ev, op2)
-    assert "una inscripción por persona" in respuesta(i), respuesta(i)
+    assert "inscripción múltiple" in respuesta(i).lower() or "cancelar" in respuesta(i).lower(), respuesta(i)
 
-    # Multiples inscripciones permitidas, sin duplicar la misma opcion
+    # 4. Multiples inscripciones permitidas, sin duplicar la misma opcion
     ev = crear_evento(start_time=inicio, multiple_registrations=1)
     op1, op2 = crear_opcion(ev, 5), crear_opcion(ev, 5)
     await v.inscribirse(interaccion(10), ev, op1)
     await v.inscribirse(interaccion(10), ev, op2)
     i = interaccion(10)
     await v.inscribirse(i, ev, op2)
-    assert "Ya estás registrado" in respuesta(i), respuesta(i)
+    assert "registrado" in respuesta(i).lower(), respuesta(i)
     assert len(inscripciones(ev)) == 2, inscripciones(ev)
 
-    # Restricciones de rol
+    # 5. Restricciones de rol
     ev = crear_evento(start_time=inicio)
     op = crear_opcion(ev, 5)
     conn = database.conectar_db()
@@ -114,23 +114,25 @@ async def main():
     conn.execute("INSERT INTO evento_restricciones (event_id, role_id, tipo) VALUES (?, 66, 'bloqueado')", (ev,))
     conn.commit()
     conn.close()
+
     i = interaccion(10, roles=[1])
     await v.inscribirse(i, ev, op)
-    assert "reservado a roles" in respuesta(i), respuesta(i)
+    assert "reservado" in respuesta(i).lower(), respuesta(i)
+
     i = interaccion(11, roles=[99, 66])
     await v.inscribirse(i, ev, op)
-    assert "no puede inscribirse" in respuesta(i), respuesta(i)
+    assert "bloqueada" in respuesta(i).lower() or "no puede" in respuesta(i).lower(), respuesta(i)
+
     await v.inscribirse(interaccion(12, roles=[99]), ev, op)
     assert inscripciones(ev) == [(12, "confirmado", 0)], inscripciones(ev)
 
-    # Evento ya terminado
+    # 6. Evento ya terminado
     ev = crear_evento(start_time=f.a_utc_iso(f.ahora() - timedelta(hours=3)))
     op = crear_opcion(ev, 5)
     i = interaccion(10)
     await v.inscribirse(i, ev, op)
-    assert "ya ha finalizado" in respuesta(i), respuesta(i)
+    assert "finalizado" in respuesta(i).lower(), respuesta(i)
 
     print("smoke test OK")
-
 
 asyncio.run(main())

@@ -1,6 +1,7 @@
 import asyncio
 import logging
 import re
+from typing import List, Optional, Any
 
 import discord
 from discord.ext import commands
@@ -14,7 +15,7 @@ from vistas_eventos import publicar_evento
 
 log = logging.getLogger(__name__)
 
-TIMEOUT_PASO = 600
+TIMEOUT_PASO = 180  # Tiempo límite en segundos por cada paso (3 min)
 COLORES = {
     "Azul": 0x5865F2, "Morado": 0x9B59B6, "Verde": 0x57F287, "Amarillo": 0xFEE75C,
     "Rojo": 0xED4245, "Naranja": 0xE67E22, "Rosa": 0xEB459E, "Cian": 0x00FFFF,
@@ -22,10 +23,14 @@ COLORES = {
 }
 SESIONES_ACTIVAS = set()
 
+
 async def ejecutar_creador_lineal(bot: commands.Bot, interaction: discord.Interaction):
     usuario, guild = interaction.user, interaction.guild
-    if not guild: return
+    if not guild:
+        return
+    
     SESIONES_ACTIVAS.add(usuario.id)
+    msg_asistente: Optional[discord.Message] = None
 
     try:
         datos = {
@@ -37,50 +42,71 @@ async def ejecutar_creador_lineal(bot: commands.Bot, interaction: discord.Intera
         }
 
         async def enviar_paso(titulo: str, descripcion: str, aviso_error: str = None, mostrar_cancelar: bool = True):
+            nonlocal msg_asistente
             cuerpo = f"‼ AVISO: {aviso_error} ‼\n\n" + descripcion if aviso_error else descripcion
             embed = discord.Embed(title=titulo, description=cuerpo, color=COLOR_BLANCO)
-            if mostrar_cancelar: embed.set_footer(text="► Escribe 'cancel' en cualquier momento para cancelar ◄")
-            return await usuario.send(embed=embed)
+            if mostrar_cancelar:
+                embed.set_footer(text="► Escribe 'cancel' en cualquier momento para cancelar ◄")
+            
+            # Intenta editar el mensaje existente para no saturar el chat de DMs
+            if msg_asistente:
+                try:
+                    await msg_asistente.edit(embed=embed)
+                    return msg_asistente
+                except (discord.HTTPException, discord.NotFound):
+                    msg_asistente = None
+            
+            msg_asistente = await usuario.send(embed=embed)
+            return msg_asistente
 
         async def esperar_respuesta():
-            def check(msg): return msg.author.id == usuario.id and isinstance(msg.channel, discord.DMChannel)
+            def check(m): 
+                return m.author.id == usuario.id and isinstance(m.channel, discord.DMChannel)
             try:
                 msg = await bot.wait_for("message", check=check, timeout=TIMEOUT_PASO)
                 c = msg.content.strip()
+                try:
+                    await msg.delete()
+                except discord.HTTPException:
+                    pass
                 return "CANCEL" if c.lower() == "cancel" else c
-            except asyncio.TimeoutError: return "TIMEOUT"
+            except asyncio.TimeoutError:
+                return "TIMEOUT"
 
         error_actual = None
 
-        # PASO 0: Confirmacion
-        try:
-            while True:
-                desc = f"► Servidor: **{guild.name}**\n\n► [Y] Si, iniciar creacion\n► [N] No, cancelar\n\n§ Introduce 'Y' o 'N':"
-                await enviar_paso("¿DESEAS INICIAR LA CREACION DEL EVENTO?", desc, error_actual)
-                error_actual, resp = None, await esperar_respuesta()
-                if resp == "TIMEOUT": return await enviar_paso("CREACION CANCELADA", "‼ Se ha cancelado por inactividad.", mostrar_cancelar=False)
-                if resp in ("CANCEL", "N", "NO", "n", "no"): return await enviar_paso("CREACION CANCELADA", "‼ Evento cancelado.", mostrar_cancelar=False)
-                if resp.lower() in ("y", "s", "si", "yes"): break
-                error_actual = "Introduce 'Y' o 'N'."
-        except discord.Forbidden: return
+        # PASO 0: Confirmación
+        while True:
+            desc = f"► Servidor: **{guild.name}**\n\n► [Y] Sí, iniciar creación\n► [N] No, cancelar\n\n§ Introduce 'Y' o 'N':"
+            await enviar_paso("¿DESEAS INICIAR LA CREACIÓN DEL EVENTO?", desc, error_actual)
+            error_actual, resp = None, await esperar_respuesta()
+            if resp == "TIMEOUT": 
+                return await enviar_paso("CREACIÓN CANCELADA", "‼ Se ha cancelado por inactividad.", mostrar_cancelar=False)
+            if resp in ("CANCEL", "N", "NO", "n", "no"): 
+                return await enviar_paso("CREACIÓN CANCELADA", "‼ Evento cancelado.", mostrar_cancelar=False)
+            if resp.lower() in ("y", "s", "si", "yes"): 
+                break
+            error_actual = "Introduce 'Y' o 'N'."
 
         # PASO 1: Canal Destino
         canales = [c for c in guild.text_channels if c.permissions_for(guild.me).send_messages]
-        if not canales: return await enviar_paso("SIN CANALES", "‼ No hay canales disponibles.", mostrar_cancelar=False)
+        if not canales: 
+            return await enviar_paso("SIN CANALES", "‼ No hay canales disponibles donde el bot tenga permisos de envío.", mostrar_cancelar=False)
 
         pagina, por_pagina = 0, 15
         total_paginas = max(1, (len(canales) + por_pagina - 1) // por_pagina)
         while True:
             canales_pag = canales[pagina * por_pagina : (pagina + 1) * por_pagina]
             lineas = [f"► [{i + 1}] {c.mention}" for i, c in enumerate(canales_pag)]
-            desc = "Selecciona el canal de publicacion:\n\n" + "\n".join(lineas) + f"\n\n─── Pagina {pagina + 1} de {total_paginas} ───"
+            desc = "Selecciona el canal de publicación:\n\n" + "\n".join(lineas) + f"\n\n─── Página {pagina + 1} de {total_paginas} ───"
             if pagina < total_paginas - 1: desc += "\n► [S] Siguiente"
             if pagina > 0: desc += "\n◄ [A] Anterior"
-            desc += "\n\n§ Introduce el numero, 'S' o 'A':"
+            desc += "\n\n§ Introduce el número, 'S' o 'A':"
 
-            await enviar_paso("¿EN QUE CANAL DESEAS PUBLICAR EL EVENTO?", desc, error_actual)
+            await enviar_paso("¿EN QUÉ CANAL DESEAS PUBLICAR EL EVENTO?", desc, error_actual)
             error_actual, resp = None, await esperar_respuesta()
-            if resp == "TIMEOUT" or resp == "CANCEL": return await enviar_paso("CREACION CANCELADA", "‼ Cancelado.", mostrar_cancelar=False)
+            if resp in ("TIMEOUT", "CANCEL"): 
+                return await enviar_paso("CREACIÓN CANCELADA", "‼ Cancelado.", mostrar_cancelar=False)
 
             r_up = resp.upper()
             if r_up == "S" and pagina < total_paginas - 1: pagina += 1
@@ -88,195 +114,235 @@ async def ejecutar_creador_lineal(bot: commands.Bot, interaction: discord.Intera
             elif resp.isdigit() and 1 <= int(resp) <= len(canales_pag):
                 datos["publish_channel"] = canales_pag[int(resp) - 1]
                 break
-            else: error_actual = "Opcion invalida."
+            else: 
+                error_actual = "Opción inválida."
 
-        # PASO 2: Titulo
+        # PASO 2: Título
         while True:
-            await enviar_paso("¿CUAL ES EL TITULO DEL EVENTO?", "► Escribe el nombre o titulo.\n§ Maximo 100 caracteres.", error_actual)
+            await enviar_paso("¿CUÁL ES EL TÍTULO DEL EVENTO?", "► Escribe el nombre o título.\n§ Máximo 100 caracteres.", error_actual)
             error_actual, resp = None, await esperar_respuesta()
-            if resp in ("TIMEOUT", "CANCEL"): return await enviar_paso("CREACION CANCELADA", "‼ Cancelado.", mostrar_cancelar=False)
+            if resp in ("TIMEOUT", "CANCEL"): 
+                return await enviar_paso("CREACIÓN CANCELADA", "‼ Cancelado.", mostrar_cancelar=False)
             if 1 <= len(resp) <= 100:
                 datos["title"] = resp
                 break
-            error_actual = "Titulo invalido (1-100 caracteres)."
+            error_actual = "Título inválido (debe tener entre 1 y 100 caracteres)."
 
-        # PASO 3: Descripcion
+        # PASO 3: Descripción
         while True:
-            await enviar_paso("¿CUAL ES LA DESCRIPCION?", "► Escribe la descripcion o 'ninguna' (Max 2000 caracteres).", error_actual)
+            await enviar_paso("¿CUÁL ES LA DESCRIPCIÓN?", "► Escribe la descripción o 'ninguna' (Máx 2000 caracteres).", error_actual)
             error_actual, resp = None, await esperar_respuesta()
-            if resp in ("TIMEOUT", "CANCEL"): return await enviar_paso("CREACION CANCELADA", "‼ Cancelado.", mostrar_cancelar=False)
-            if resp.lower() == "ninguna": datos["description"] = ""; break
-            elif len(resp) <= 2000: datos["description"] = resp; break
-            error_actual = "Descripcion demasiado larga."
+            if resp in ("TIMEOUT", "CANCEL"): 
+                return await enviar_paso("CREACIÓN CANCELADA", "‼ Cancelado.", mostrar_cancelar=False)
+            if resp.lower() == "ninguna": 
+                datos["description"] = ""
+                break
+            elif len(resp) <= 2000: 
+                datos["description"] = resp
+                break
+            error_actual = "Descripción demasiado larga (máximo 2000 caracteres)."
 
         # PASO 4: Fecha y Hora
         while True:
             await enviar_paso("¿FECHA Y HORA DE INICIO?", "► Formato: DD/MM/YYYY HH:MM\n§ Ejemplo: 30/08/2026 20:30", error_actual)
             error_actual, resp = None, await esperar_respuesta()
-            if resp in ("TIMEOUT", "CANCEL"): return await enviar_paso("CREACION CANCELADA", "‼ Cancelado.", mostrar_cancelar=False)
+            if resp in ("TIMEOUT", "CANCEL"): 
+                return await enviar_paso("CREACIÓN CANCELADA", "‼ Cancelado.", mostrar_cancelar=False)
             fecha = parsear_fecha(resp)
-            if not fecha: error_actual = "Formato incorrecto. Usa DD/MM/YYYY HH:MM"; continue
-            if fecha <= ahora(): error_actual = "La fecha debe ser en el futuro."; continue
+            if not fecha: 
+                error_actual = "Formato incorrecto. Usa DD/MM/YYYY HH:MM"
+                continue
+            if fecha <= ahora(): 
+                error_actual = "La fecha debe ser en el futuro."
+                continue
             datos["start_time"] = fecha
             break
 
-        # PASO 5: Duracion
+        # PASO 5: Duración
         while True:
-            await enviar_paso("¿DURACION ESTIMADA?", "► Ejemplos: 2h, 90m, 2h 30m", error_actual)
+            await enviar_paso("¿DURACIÓN ESTIMADA?", "► Ejemplos: 2h, 90m, 2h 30m", error_actual)
             error_actual, resp = None, await esperar_respuesta()
-            if resp in ("TIMEOUT", "CANCEL"): return await enviar_paso("CREACION CANCELADA", "‼ Cancelado.", mostrar_cancelar=False)
+            if resp in ("TIMEOUT", "CANCEL"): 
+                return await enviar_paso("CREACIÓN CANCELADA", "‼ Cancelado.", mostrar_cancelar=False)
             cnt = resp.lower()
             h, m = re.search(r"(\d+)\s*h", cnt), re.search(r"(\d+)\s*m", cnt)
             tot = (int(h.group(1)) * 60 if h else 0) + (int(m.group(1)) if m else 0)
-            if tot > 0: datos["duration_minutes"] = tot; break
-            error_actual = "Duracion no valida."
+            if tot > 0: 
+                datos["duration_minutes"] = tot
+                break
+            error_actual = "Duración no válida. Especifica horas (h) o minutos (m)."
 
-# PASO 6: Frecuencia
+        # PASO 6: Frecuencia
         frecuencias = ["Una vez", "Diariamente", "Semanalmente", "Mensualmente"]
         lista_frec = "\n".join(f"► [{i+1}] {f}" for i, f in enumerate(frecuencias))
         while True:
-            await enviar_paso("¿FRECUENCIA DE REPETICION?", f"{lista_frec}\n\n§ Introduce un numero:", error_actual)
+            await enviar_paso("¿FRECUENCIA DE REPETICIÓN?", f"{lista_frec}\n\n§ Introduce un número:", error_actual)
             error_actual, resp = None, await esperar_respuesta()
-            if resp in ("TIMEOUT", "CANCEL"): return await enviar_paso("CREACION CANCELADA", "‼ Cancelado.", mostrar_cancelar=False)
+            if resp in ("TIMEOUT", "CANCEL"): 
+                return await enviar_paso("CREACIÓN CANCELADA", "‼ Cancelado.", mostrar_cancelar=False)
             if resp.isdigit() and 1 <= int(resp) <= len(frecuencias):
                 datos["frequency"] = frecuencias[int(resp) - 1]
                 break
-            error_actual = "Selecciona un numero entre 1 y 4."
+            error_actual = "Selecciona un número entre 1 y 4."
 
-        # PASO 7: Inscripciones (Establecidas de manera predeterminada)
+        # PASO 7: Opciones de inscripción predeterminadas
         datos["signup_options"] = [
             {"name": "[✓] Acepto", "max_slots": None},
             {"name": "[X] Rechazo", "max_slots": None},
             {"name": "[?] Indeciso", "max_slots": None}
-        ]              
-        # PASO 8: Lista de Espera
-        if datos["signup_options"]:
-            while True:
-                desc = "► [1] Si (Habilitar lista de espera cuando se llenen las plazas)\n► [2] No (Rechazar inscripciones cuando se llene)\n\n§ Introduce 1 o 2:"
-                await enviar_paso("¿PERMITIR LISTA DE ESPERA (RESERVA)?", desc, error_actual)
-                error_actual, resp = None, await esperar_respuesta()
-                if resp in ("TIMEOUT", "CANCEL"): return await enviar_paso("CREACION CANCELADA", "‼ Cancelado.", mostrar_cancelar=False)
-                if resp in ("1", "2"):
-                    datos["allow_waitlist"] = (resp == "1")
-                    break
-                error_actual = "Introduce 1 o 2."
+        ]
 
-        # PASO 9: Inscripciones Multiples
-        if datos["signup_options"]:
-            while True:
-                desc = "► [1] No (Una sola inscripcion por usuario)\n► [2] Si (Inscripcion multiple)\n\n§ Introduce 1 o 2:"
-                await enviar_paso("¿PERMITIR INSCRIPCIONES MULTIPLES?", desc, error_actual)
-                error_actual, resp = None, await esperar_respuesta()
-                if resp in ("TIMEOUT", "CANCEL"): return await enviar_paso("CREACION CANCELADA", "‼ Cancelado.", mostrar_cancelar=False)
-                if resp in ("1", "2"):
-                    datos["multiple_registrations"] = (resp == "2")
-                    break
-                error_actual = "Introduce 1 o 2."
+        # PASO 8: Lista de Espera
+        while True:
+            desc = "► [1] Sí (Habilitar lista de espera cuando se me llenen las plazas)\n► [2] No (Rechazar inscripciones cuando se llene)\n\n§ Introduce 1 o 2:"
+            await enviar_paso("¿PERMITIR LISTA DE ESPERA (RESERVA)?", desc, error_actual)
+            error_actual, resp = None, await esperar_respuesta()
+            if resp in ("TIMEOUT", "CANCEL"): 
+                return await enviar_paso("CREACIÓN CANCELADA", "‼ Cancelado.", mostrar_cancelar=False)
+            if resp in ("1", "2"):
+                datos["allow_waitlist"] = (resp == "1")
+                break
+            error_actual = "Introduce 1 o 2."
+
+        # PASO 9: Inscripciones Múltiples
+        while True:
+            desc = "► [1] No (Una sola opción por usuario)\n► [2] Sí (Inscripción múltiple)\n\n§ Introduce 1 o 2:"
+            await enviar_paso("¿PERMITIR INSCRIPCIONES MÚLTIPLES?", desc, error_actual)
+            error_actual, resp = None, await esperar_respuesta()
+            if resp in ("TIMEOUT", "CANCEL"): 
+                return await enviar_paso("CREACIÓN CANCELADA", "‼ Cancelado.", mostrar_cancelar=False)
+            if resp in ("1", "2"):
+                datos["multiple_registrations"] = (resp == "2")
+                break
+            error_actual = "Introduce 1 o 2."
 
         # PASO 10: Menciones
         conn = conectar_db()
-        filas_m = conn.execute("SELECT role_id FROM roles_mencionables").fetchall()
+        filas_m = conn.execute("SELECT role_id FROM roles_mencionables WHERE guild_id = ?", (guild.id,)).fetchall()
         conn.close()
-        ids_permitidos = {int(f["role_id"]) for f in filas_m}
+        
+        ids_permitidos = {int(f["role_id"]) for f in filas_m} if filas_m else set()
         roles = [guild.get_role(rid) for rid in ids_permitidos if guild.get_role(rid)] if ids_permitidos else guild.roles
         roles = [r for r in roles if r and not r.is_default() and not r.managed]
 
         pagina_r, total_pag_r = 0, max(1, (len(roles) + por_pagina - 1) // por_pagina)
         while True:
             roles_pag = roles[pagina_r * por_pagina : (pagina_r + 1) * por_pagina]
-            lineas = ["► [0] Ninguna mencion"] + [f"► [{i}] @{r.name}" for i, r in enumerate(roles_pag, start=1)]
+            lineas = ["► [0] Ninguna mención"] + [f"► [{i}] @{r.name}" for i, r in enumerate(roles_pag, start=1)]
             desc = "Selecciona roles a mencionar:\n\n" + "\n".join(lineas)
             if total_pag_r > 1:
-                desc += f"\n\n─── Pagina {pagina_r + 1} de {total_pag_r} ───"
+                desc += f"\n\n─── Página {pagina_r + 1} de {total_pag_r} ───"
                 if pagina_r < total_pag_r - 1: desc += "\n► [S] Siguiente"
                 if pagina_r > 0: desc += "\n◄ [A] Anterior"
-            desc += "\n\n§ Introduce '0' o numeros separados por comas:"
+            desc += "\n\n§ Introduce '0' o números separados por comas (ej: 1,3):"
 
             await enviar_paso("¿ROLES A MENCIONAR?", desc, error_actual)
             error_actual, resp = None, await esperar_respuesta()
-            if resp in ("TIMEOUT", "CANCEL"): return await enviar_paso("CREACION CANCELADA", "‼ Cancelado.", mostrar_cancelar=False)
+            if resp in ("TIMEOUT", "CANCEL"): 
+                return await enviar_paso("CREACIÓN CANCELADA", "‼ Cancelado.", mostrar_cancelar=False)
 
             r_up = resp.upper()
             if r_up == "S" and pagina_r < total_pag_r - 1: pagina_r += 1
             elif r_up == "A" and pagina_r > 0: pagina_r -= 1
-            elif resp == "0": datos["mention_roles"] = []; break
+            elif resp == "0": 
+                datos["mention_roles"] = []
+                break
             else:
                 partes = [p.strip() for p in resp.split(",") if p.strip().isdigit()]
                 seleccionados, valido = [], True
                 for p in partes:
                     idx = int(p) - 1
-                    if 0 <= idx < len(roles_pag): seleccionados.append(roles_pag[idx])
-                    else: valido = False; break
+                    if 0 <= idx < len(roles_pag): 
+                        seleccionados.append(roles_pag[idx])
+                    else: 
+                        valido = False
+                        break
                 if valido and seleccionados:
                     datos["mention_roles"] = seleccionados
                     break
-                error_actual = "Opcion no valida."
+                error_actual = "Opción no válida."
 
-        # PASO 10B: Restriccion de acceso
+        # PASO 10B: Restricción de acceso
         roles_acceso = [r for r in guild.roles if not r.is_default() and not r.managed]
         pagina_a, total_pag_a = 0, max(1, (len(roles_acceso) + por_pagina - 1) // por_pagina)
-        while datos["signup_options"]:  # solo tiene sentido si el evento admite inscripciones
+        while True:
             roles_a_pag = roles_acceso[pagina_a * por_pagina : (pagina_a + 1) * por_pagina]
             lineas = ["► [0] Abierto a todo el servidor"] + [f"► [{i}] @{r.name}" for i, r in enumerate(roles_a_pag, start=1)]
-            desc = "Solo estos roles podran inscribirse:\n\n" + "\n".join(lineas)
+            desc = "Solo estos roles podrán inscribirse:\n\n" + "\n".join(lineas)
             if total_pag_a > 1:
-                desc += f"\n\n─── Pagina {pagina_a + 1} de {total_pag_a} ───"
+                desc += f"\n\n─── Página {pagina_a + 1} de {total_pag_a} ───"
                 if pagina_a < total_pag_a - 1: desc += "\n► [S] Siguiente"
                 if pagina_a > 0: desc += "\n◄ [A] Anterior"
-            desc += "\n\n§ Introduce '0' o numeros separados por comas:"
+            desc += "\n\n§ Introduce '0' o números separados por comas:"
 
-            await enviar_paso("¿QUIEN PUEDE INSCRIBIRSE?", desc, error_actual)
+            await enviar_paso("¿QUIÉN PUEDE INSCRIBIRSE?", desc, error_actual)
             error_actual, resp = None, await esperar_respuesta()
-            if resp in ("TIMEOUT", "CANCEL"): return await enviar_paso("CREACION CANCELADA", "‼ Cancelado.", mostrar_cancelar=False)
+            if resp in ("TIMEOUT", "CANCEL"): 
+                return await enviar_paso("CREACIÓN CANCELADA", "‼ Cancelado.", mostrar_cancelar=False)
 
             r_up = resp.upper()
             if r_up == "S" and pagina_a < total_pag_a - 1: pagina_a += 1
             elif r_up == "A" and pagina_a > 0: pagina_a -= 1
-            elif resp == "0": datos["restricted_roles"] = []; break
+            elif resp == "0": 
+                datos["restricted_roles"] = []
+                break
             else:
                 partes = [p.strip() for p in resp.split(",") if p.strip().isdigit()]
                 seleccionados, valido = [], True
                 for p in partes:
                     idx = int(p) - 1
-                    if 0 <= idx < len(roles_a_pag): seleccionados.append(roles_a_pag[idx])
-                    else: valido = False; break
+                    if 0 <= idx < len(roles_a_pag): 
+                        seleccionados.append(roles_a_pag[idx])
+                    else: 
+                        valido = False
+                        break
                 if valido and seleccionados:
                     datos["restricted_roles"] = seleccionados
                     break
-                error_actual = "Opcion no valida."
+                error_actual = "Opción no válida."
 
         # PASO 11: Color
         colores_lista = list(COLORES.keys())
         texto_colores = "\n".join(f"► [{i+1}] {c}" for i, c in enumerate(colores_lista))
         while True:
-            await enviar_paso("¿COLOR DEL ANUNCIO?", f"{texto_colores}\n\n§ Introduce el numero:", error_actual)
+            await enviar_paso("¿COLOR DEL ANUNCIO?", f"{texto_colores}\n\n§ Introduce el número:", error_actual)
             error_actual, resp = None, await esperar_respuesta()
-            if resp in ("TIMEOUT", "CANCEL"): return await enviar_paso("CREACION CANCELADA", "‼ Cancelado.", mostrar_cancelar=False)
+            if resp in ("TIMEOUT", "CANCEL"): 
+                return await enviar_paso("CREACIÓN CANCELADA", "‼ Cancelado.", mostrar_cancelar=False)
             if resp.isdigit() and 1 <= int(resp) <= len(colores_lista):
                 datos["color_name"] = colores_lista[int(resp) - 1]
                 datos["color"] = COLORES[datos["color_name"]]
                 break
-            error_actual = "Numero invalido."
+            error_actual = "Número inválido."
 
         # PASO 12: Imagen
+        regex_url = re.compile(r"^https?://\S+\.(?:png|jpg|jpeg|gif|webp)(?:\?\S*)?$", re.IGNORECASE)
         while True:
-            await enviar_paso("¿IMAGEN O BANNER?", "► Introduce la URL directa (http://... o https://...) o 'ninguna'.", error_actual)
+            await enviar_paso("¿IMAGEN O BANNER?", "► Introduce la URL directa a una imagen (jpg, png, gif) o escribe 'ninguna'.", error_actual)
             error_actual, resp = None, await esperar_respuesta()
-            if resp in ("TIMEOUT", "CANCEL"): return await enviar_paso("CREACION CANCELADA", "‼ Cancelado.", mostrar_cancelar=False)
-            if resp.lower() == "ninguna": datos["image_url"] = None; break
-            elif resp.startswith(("http://", "https://")): datos["image_url"] = resp; break
-            error_actual = "URL invalida."
+            if resp in ("TIMEOUT", "CANCEL"): 
+                return await enviar_paso("CREACIÓN CANCELADA", "‼ Cancelado.", mostrar_cancelar=False)
+            if resp.lower() == "ninguna": 
+                datos["image_url"] = None
+                break
+            elif regex_url.match(resp) or resp.startswith(("http://", "https://")):
+                datos["image_url"] = resp
+                break
+            error_actual = "URL no válida. Asegúrate de que empiece por http:// o https://"
 
-        # PASO 13: Ubicacion
+        # PASO 13: Ubicación
         while True:
-            desc = "► [1] Seleccionar canal existente del servidor\n► [2] Crear canal de voz automatico al iniciar el evento\n► [3] Sin ubicacion especifica\n\n§ Introduce 1, 2 o 3:"
-            await enviar_paso("¿UBICACION O SALA DEL EVENTO?", desc, error_actual)
+            desc = "► [1] Seleccionar canal existente del servidor\n► [2] Crear canal de voz automático al iniciar el evento\n► [3] Sin ubicación específica\n\n§ Introduce 1, 2 o 3:"
+            await enviar_paso("¿UBICACIÓN O SALA DEL EVENTO?", desc, error_actual)
             error_actual, resp = None, await esperar_respuesta()
-            if resp in ("TIMEOUT", "CANCEL"): return await enviar_paso("CREACION CANCELADA", "‼ Cancelado.", mostrar_cancelar=False)
+            if resp in ("TIMEOUT", "CANCEL"): 
+                return await enviar_paso("CREACIÓN CANCELADA", "‼ Cancelado.", mostrar_cancelar=False)
             if resp == "3":
-                datos["location"] = None; datos["auto_voice"] = False; break
+                datos["location"], datos["auto_voice"] = None, False
+                break
             elif resp == "2":
-                datos["location"] = None; datos["auto_voice"] = True; break
+                datos["location"], datos["auto_voice"] = None, True
+                break
             elif resp == "1":
                 canales_ub = [c for c in guild.channels if isinstance(c, (discord.TextChannel, discord.VoiceChannel))]
                 pagina_u, total_pag_u = 0, max(1, (len(canales_ub) + por_pagina - 1) // por_pagina)
@@ -284,36 +350,42 @@ async def ejecutar_creador_lineal(bot: commands.Bot, interaction: discord.Intera
                 while seleccionado is None:
                     canales_u_pag = canales_ub[pagina_u * por_pagina : (pagina_u + 1) * por_pagina]
                     desc_u = "\n".join(f"► [{i+1}] {c.mention}" for i, c in enumerate(canales_u_pag))
-                    desc_u += f"\n\n─── Pagina {pagina_u + 1} de {total_pag_u} ───"
+                    desc_u += f"\n\n─── Página {pagina_u + 1} de {total_pag_u} ───"
                     if pagina_u < total_pag_u - 1: desc_u += "\n► [S] Siguiente"
                     if pagina_u > 0: desc_u += "\n◄ [A] Anterior"
                     desc_u += "\n► [V] Volver"
 
-                    await enviar_paso("SELECCIONA CANAL DE UBICACION", desc_u, error_actual)
+                    await enviar_paso("SELECCIONA CANAL DE UBICACIÓN", desc_u, error_actual)
                     error_actual, r_chan = None, await esperar_respuesta()
                     if r_chan in ("TIMEOUT", "CANCEL"):
-                        return await enviar_paso("CREACION CANCELADA", "‼ Cancelado.", mostrar_cancelar=False)
+                        return await enviar_paso("CREACIÓN CANCELADA", "‼ Cancelado.", mostrar_cancelar=False)
 
                     r_up_chan = r_chan.upper()
-                    if r_up_chan == "V": break
+                    if r_up_chan == "V": 
+                        break
                     elif r_up_chan == "S" and pagina_u < total_pag_u - 1: pagina_u += 1
                     elif r_up_chan == "A" and pagina_u > 0: pagina_u -= 1
                     elif r_chan.isdigit() and 1 <= int(r_chan) <= len(canales_u_pag):
                         seleccionado = canales_u_pag[int(r_chan) - 1]
-                    else: error_actual = "Canal no valido."
+                    else: 
+                        error_actual = "Canal no válido."
 
                 if seleccionado:
                     datos["location"] = seleccionado
                     datos["auto_voice"] = False
                     break
-            else: error_actual = "Introduce 1, 2 o 3."
+            else: 
+                error_actual = "Introduce 1, 2 o 3."
 
         # PASO 14: Recordatorios
         while True:
-            await enviar_paso("¿RECORDATORIOS PREVIOS?", "► Ejemplos: 24h, 1h, 30m o 'ninguno'.", error_actual)
+            await enviar_paso("¿RECORDATORIOS PREVIOS?", "► Ejemplos: 24h, 1h, 30m o 'ninguno'. Separa por comas si son varios.", error_actual)
             error_actual, resp = None, await esperar_respuesta()
-            if resp in ("TIMEOUT", "CANCEL"): return await enviar_paso("CREACION CANCELADA", "‼ Cancelado.", mostrar_cancelar=False)
-            if resp.lower() == "ninguno": datos["reminders"] = []; break
+            if resp in ("TIMEOUT", "CANCEL"): 
+                return await enviar_paso("CREACIÓN CANCELADA", "‼ Cancelado.", mostrar_cancelar=False)
+            if resp.lower() == "ninguno": 
+                datos["reminders"] = []
+                break
             recs = []
             for parte in resp.split(","):
                 m = re.match(r"(\d+)\s*(m|min|h|hora|horas|d|dia|dias)", parte.strip().lower())
@@ -321,20 +393,22 @@ async def ejecutar_creador_lineal(bot: commands.Bot, interaction: discord.Intera
                     cant, uni = int(m.group(1)), m.group(2)
                     mins = cant if uni.startswith("m") else (cant * 60 if uni.startswith("h") else cant * 1440)
                     if mins > 0: recs.append(mins)
-            if recs: datos["reminders"] = sorted(set(recs), reverse=True); break
-            error_actual = "Formato de recordatorios invalido."
+            if recs: 
+                datos["reminders"] = sorted(set(recs), reverse=True)
+                break
+            error_actual = "Formato de recordatorios inválido. Ejemplo: '1h, 30m'"
 
-        # PASO 15: Resumen y Publicacion
+        # PASO 15: Resumen y Publicación
         resumen = [
             f"► Organizador: {usuario.mention}",
-            f"► Titulo: **{datos['title']}**",
+            f"► Título: **{datos['title']}**",
             f"► Inicio: <t:{timestamp_discord(datos['start_time'])}:F>",
-            f"► Duracion: {formatear_duracion(datos['duration_minutes'])}",
+            f"► Duración: {formatear_duracion(datos['duration_minutes'])}",
             f"► Frecuencia: {datos['frequency']}",
-            f"► Canal: {datos['publish_channel'].mention}",
+            f"► Canal de Anuncio: {datos['publish_channel'].mention}",
             f"► Lista de Espera: {'Habilitada' if datos['allow_waitlist'] else 'Deshabilitada'}",
-            f"► Acceso: {', '.join('@' + r.name for r in datos['restricted_roles']) or 'Todo el servidor'}",
-            f"► Voz Automatica: {'Si' if datos['auto_voice'] else 'No'}",
+            f"► Acceso Restringido: {', '.join('@' + r.name for r in datos['restricted_roles']) or 'Todo el servidor'}",
+            f"► Voz Automática: {'Sí' if datos['auto_voice'] else 'No'}",
             f"► Recordatorios: {formatear_recordatorios(datos['reminders'])}"
         ]
         desc_final = "╔════════════════════════════════════════╗\n          RESUMEN DEL EVENTO\n╚════════════════════════════════════════╝\n\n" + "\n".join(resumen) + "\n\n► [1] Publicar Evento\n► [2] Cancelar\n\n§ Introduce 1 o 2:"
@@ -342,57 +416,60 @@ async def ejecutar_creador_lineal(bot: commands.Bot, interaction: discord.Intera
         while True:
             await enviar_paso("¿DESEAS PUBLICAR EL EVENTO?", desc_final, error_actual)
             error_actual, resp = None, await esperar_respuesta()
-            if resp in ("2", "CANCEL", "TIMEOUT"): return await enviar_paso("CREACION CANCELADA", "‼ Cancelado.", mostrar_cancelar=False)
-            if resp == "1": break
+            if resp in ("2", "CANCEL", "TIMEOUT"): 
+                return await enviar_paso("CREACIÓN CANCELADA", "‼ Cancelado.", mostrar_cancelar=False)
+            if resp == "1": 
+                break
             error_actual = "Introduce 1 o 2."
 
-        # Publicar en la BD
+        # Verificación final de que el canal de destino aún existe en Discord
         canal = datos["publish_channel"]
+        if not canal or not guild.get_channel(canal.id):
+            return await enviar_paso("ERROR AL PUBLICAR", "‼ El canal seleccionado ya no existe en el servidor.", mostrar_cancelar=False)
+
         loc_id = datos["location"].id if datos["location"] else None
 
+        # Publicación en Base de Datos utilizando el gestor de contexto nativo
         conn = conectar_db()
         try:
-            conn.execute("BEGIN IMMEDIATE")
-            cursor = conn.execute("""
-                INSERT INTO eventos (guild_id, channel_id, creator_id, title, description, start_time,
-                                     duration_minutes, frequency, color, location_channel_id, auto_voice,
-                                     image_url, multiple_registrations, allow_waitlist, created_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """, (
-                guild.id, canal.id, usuario.id, datos["title"], datos["description"],
-                a_utc_iso(datos["start_time"]), datos["duration_minutes"], datos["frequency"],
-                datos["color"], loc_id, 1 if datos["auto_voice"] else 0, datos["image_url"],
-                1 if datos["multiple_registrations"] else 0, 1 if datos["allow_waitlist"] else 0,
-                a_utc_iso(ahora()),
-            ))
-            evento_id = cursor.lastrowid
+            with conn:
+                cursor = conn.execute("""
+                    INSERT INTO eventos (guild_id, channel_id, creator_id, title, description, start_time,
+                                         duration_minutes, frequency, color, location_channel_id, auto_voice,
+                                         image_url, multiple_registrations, allow_waitlist, created_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """, (
+                    guild.id, canal.id, usuario.id, datos["title"], datos["description"],
+                    a_utc_iso(datos["start_time"]), datos["duration_minutes"], datos["frequency"],
+                    datos["color"], loc_id, 1 if datos["auto_voice"] else 0, datos["image_url"],
+                    1 if datos["multiple_registrations"] else 0, 1 if datos["allow_waitlist"] else 0,
+                    a_utc_iso(ahora()),
+                ))
+                evento_id = cursor.lastrowid
 
-            conn.executemany(
-                "INSERT INTO opciones_inscripcion (event_id, name, emoji, max_slots) VALUES (?, ?, ?, ?)",
-                [(evento_id, o["name"], "", o["max_slots"]) for o in datos["signup_options"]],
-            )
-            conn.executemany(
-                "INSERT INTO evento_menciones (event_id, role_id) VALUES (?, ?)",
-                [(evento_id, r.id) for r in datos["mention_roles"]],
-            )
-            conn.executemany(
-                "INSERT INTO recordatorios (event_id, minutes_before) VALUES (?, ?)",
-                [(evento_id, m) for m in datos["reminders"]],
-            )
+                conn.executemany(
+                    "INSERT INTO opciones_inscripcion (event_id, name, emoji, max_slots) VALUES (?, ?, ?, ?)",
+                    [(evento_id, o["name"], "", o["max_slots"]) for o in datos["signup_options"]],
+                )
+                conn.executemany(
+                    "INSERT INTO evento_menciones (event_id, role_id) VALUES (?, ?)",
+                    [(evento_id, r.id) for r in datos["mention_roles"]],
+                )
+                conn.executemany(
+                    "INSERT INTO recordatorios (event_id, minutes_before) VALUES (?, ?)",
+                    [(evento_id, m) for m in datos["reminders"]],
+                )
 
-            bloqueados = conn.execute("SELECT role_id FROM roles_bloqueados").fetchall()
-            conn.executemany(
-                "INSERT INTO evento_restricciones (event_id, role_id, tipo) VALUES (?, ?, ?)",
-                [(evento_id, r.id, "permitido") for r in datos["restricted_roles"]]
-                + [(evento_id, f["role_id"], "bloqueado") for f in bloqueados],
-            )
-            conn.commit()
-        except Exception:
-            conn.rollback()
-            raise
+                bloqueados = conn.execute("SELECT role_id FROM roles_bloqueados WHERE guild_id = ?", (guild.id,)).fetchall()
+                conn.executemany(
+                    "INSERT INTO evento_restricciones (event_id, role_id, tipo) VALUES (?, ?, ?)",
+                    [(evento_id, r.id, "permitido") for r in datos["restricted_roles"]]
+                    + [(evento_id, f["role_id"], "bloqueado") for f in bloqueados],
+                )
         finally:
             conn.close()
 
+        # Publicar evento visualmente en el canal
         menciones_str = " ".join(r.mention for r in datos["mention_roles"]) or None
         _, hilo = await publicar_evento(evento_id, canal, menciones_str)
         if hilo:
@@ -403,7 +480,7 @@ async def ejecutar_creador_lineal(bot: commands.Bot, interaction: discord.Intera
 
         destino = f" con su respectivo hilo en {hilo.mention}" if hilo else ""
         await enviar_paso(
-            "EVENTO PUBLICADO CON EXITO",
+            "EVENTO PUBLICADO CON ÉXITO",
             f"► Evento #{evento_id} creado en {canal.mention}{destino}.",
             mostrar_cancelar=False,
         )
@@ -412,14 +489,14 @@ async def ejecutar_creador_lineal(bot: commands.Bot, interaction: discord.Intera
         log.warning("No se pudo continuar el asistente con %s: DMs cerrados", usuario.id)
         await avisar_fallo(interaction, "‼ No puedo escribirte por privado. Activa los MD del servidor y reintenta.")
     except Exception:
-        log.exception("Fallo el asistente de creacion de eventos de %s", usuario.id)
-        await avisar_fallo(interaction, "‼ El asistente fallo por un error interno. Vuelve a intentarlo.")
+        log.exception("Falló el asistente de creación de eventos de %s", usuario.id)
+        await avisar_fallo(interaction, "‼ El asistente falló por un error interno. Vuelve a intentarlo.")
     finally:
         SESIONES_ACTIVAS.discard(usuario.id)
 
 
 async def avisar_fallo(interaction: discord.Interaction, mensaje: str):
-    """El asistente corre en una tarea aparte: sin esto los errores se perderian en silencio."""
+    """Avisa en la interacción si el asistente falla o no se pueden mandar DMs."""
     try:
         await interaction.followup.send(mensaje, ephemeral=True)
     except discord.HTTPException:
@@ -432,7 +509,7 @@ def configurar_creador_eventos(bot: commands.Bot):
     async def cmd_crear_evento(interaction: discord.Interaction):
         if interaction.user.id in SESIONES_ACTIVAS:
             return await interaction.response.send_message(
-                "‼ Ya tienes una sesion activa en tus mensajes directos.", ephemeral=True
+                "‼ Ya tienes una sesión activa en tus mensajes directos.", ephemeral=True
             )
         await interaction.response.defer(ephemeral=True)
         await interaction.followup.send("► Asistente enviado por mensaje privado (DM).", ephemeral=True)

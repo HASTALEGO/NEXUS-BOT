@@ -5,3 +5,8 @@
 __pycache__/
 *.pyc
 .venv/
+eventos.db
+credenciales.json
+*.json
+.env
+*.db

@@ -1,16 +1,41 @@
 import os
-import urllib.parse
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from zoneinfo import ZoneInfo
 
 TIMEZONE = ZoneInfo(os.getenv("TIMEZONE", "Europe/Madrid"))
 UTC = timezone.utc
+
+# ═════════════════════════════════════════════════════════════════
+# CONSTANTES ESTÉTICAS RETRO (ESTILO Y2K / ALT-CODES ASCII 2000s)
+# ═════════════════════════════════════════════════════════════════
+ICON_BULLET = "►"
+ICON_SUB = "├─"
+ICON_STAR_FILLED = "★"
+ICON_STAR_EMPTY = "☆"
+ICON_ALERT = "‼"
+ICON_WAITLIST = "↕"
+ICON_USER = "☻"
+ICON_CHECK = "√"
+ICON_CROSS = "X"
+ICON_NOTE = "♪"
+ICON_ARROW_RIGHT = "→"
+ICON_GENDER_MALE = "♂"
+ICON_GENDER_FEMALE = "♀"
+ICON_PARAGRAPH = "§"
+ICON_PILCROW = "¶"
+
+# Escala de grises estricta (Sin colores estrafalarios)
+COLOR_MONOCHROME = 0x2B2D31  # Gris neutro oscuro para Embeds
 COLOR_BLANCO = 0xFFFFFF
 
 MESES_ES = [
     "Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio",
     "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre",
 ]
+
+# ═════════════════════════════════════════════════════════════════
+# FUNCIONES DE MANEJO DE FECHA Y TIEMPO
+# ═════════════════════════════════════════════════════════════════
 
 def ahora():
     return datetime.now(TIMEZONE)
@@ -78,25 +103,87 @@ def formatear_recordatorios(recordatorios: list) -> str:
             res.append(f"{m} min")
     return ", ".join(res)
 
-def generar_estrellas_ascii(puntuacion: float, max_estrellas: int = 5) -> str:
-    estrellas_llenas = int(round(puntuacion))
-    estrellas_vacias = max_estrellas - estrellas_llenas
-    return "★" * estrellas_llenas + "☆" * estrellas_vacias
+# ═════════════════════════════════════════════════════════════════
+# FORMATOS VISUALES RETRO Y COMPONENTES EN ESCALA DE GRISES
+# ═════════════════════════════════════════════════════════════════
 
-def generar_enlace_google_calendar(titulo: str, descripcion: str, fecha_inicio: datetime, duracion_minutos: int) -> str:
-    if fecha_inicio.tzinfo is None:
-        fecha_inicio = fecha_inicio.replace(tzinfo=TIMEZONE)
+def generar_estrellas_ascii(puntuacion: float, max_estrellas: int = 5) -> str:
+    """Genera barra de estrellas ASCII (ej: ★★★☆☆)"""
+    estrellas_llenas = int(round(puntuacion))
+    estrellas_llenas = max(0, min(max_estrellas, estrellas_llenas))
+    estrellas_vacias = max_estrellas - estrellas_llenas
+    return (ICON_STAR_FILLED * estrellas_llenas) + (ICON_STAR_EMPTY * estrellas_vacias)
+
+def format_retro_header(title: str) -> str:
+    """Formatea cabeceras al estilo texto de consola de los 2000"""
+    clean_title = title.upper()
+    sep = "═" * (len(clean_title) + 6)
+    return f"```{sep}\n  {ICON_BULLET} {clean_title}  \n{sep}```"
+
+def format_retro_embed_description(
+    desc: str, 
+    creador_mention: str, 
+    start_time_iso: str, 
+    duracion: int, 
+    canal_voz: str = None, 
+    close_before_minutes: int = 0
+) -> str:
+    """Genera el bloque principal de texto para el anuncio en consola monocromática retro."""
+    ts = timestamp_discord(start_time_iso)
+    fecha_formatted = f"<t:{ts}:F> (<t:{ts}:R>)" if ts else "Por determinar"
     
-    fecha_fin = fecha_inicio + timedelta(minutes=duracion_minutos or 60)
-    fmt = "%Y%m%dT%H%M%SZ"
+    lineas = [
+        f"{ICON_BULLET} ORGANIZADOR: {creador_mention}",
+        f"{ICON_BULLET} FECHA Y HORA: {fecha_formatted}",
+        f"{ICON_BULLET} DURACIÓN: {formatear_duracion(duracion)}",
+    ]
     
-    dt_start_utc = fecha_inicio.astimezone(ZoneInfo("UTC")).strftime(fmt)
-    dt_end_utc = fecha_fin.astimezone(ZoneInfo("UTC")).strftime(fmt)
+    if canal_voz:
+        lineas.append(f"{ICON_BULLET} UBICACIÓN: {canal_voz}")
+        
+    if close_before_minutes > 0:
+        lineas.append(f"{ICON_ALERT} CIERRE DIRECTO: {close_before_minutes} min antes del inicio")
+
+    lineas.append(f"\n{ICON_NOTE} DETALLES:\n{desc or 'Sin descripción proporcionada.'}\n")
+    lineas.append("═" * 38)
+    return "\n".join(lineas)
+
+def format_inscritos_opcion(nombre_opcion: str, confirmados: list, reserva: list, max_slots: int = None) -> str:
+    """Formatea las listas de inscritos por opción utilizando únicamente caracteres ASCII."""
+    cupo_str = f"[{len(confirmados)}/{max_slots}]" if max_slots else f"[{len(confirmados)}]"
+    header = f"**{ICON_BULLET} {nombre_opcion.upper()} {cupo_str}**"
     
-    params = {
-        "action": "TEMPLATE",
-        "text": titulo,
-        "details": descripcion or "",
-        "dates": f"{dt_start_utc}/{dt_end_utc}"
-    }
-    return f"https://calendar.google.com/calendar/render?{urllib.parse.urlencode(params)}"
+    filas = [header]
+    if not confirmados:
+        filas.append(f"  {ICON_SUB} *(Sin inscritos)*")
+    else:
+        for i, user_mention in enumerate(confirmados, 1):
+            filas.append(f"  {ICON_SUB} {i}. {ICON_USER} {user_mention}")
+
+    if reserva:
+        filas.append(f"  **{ICON_WAITLIST} LISTA DE ESPERA:**")
+        for i, user_mention in enumerate(reserva, 1):
+            filas.append(f"    {ICON_SUB} W-{i}. {user_mention}")
+
+    return "\n".join(filas)
+
+def format_perfil_asistencia(user_mention: str, stats: dict) -> str:
+    """Formatea las estadísticas del usuario al estilo terminal retro."""
+    total = stats["total"]
+    asistidos = stats["asistidos"]
+    faltas = stats["faltas"]
+    ratio = stats["ratio"]
+    
+    bar_length = 10
+    filled = int(round((ratio / 100) * bar_length))
+    bar = "█" * filled + "░" * (bar_length - filled)
+    
+    return (
+        f"```{ICON_PARAGRAPH} PERFIL DE ASISTENCIA: {user_mention}\n"
+        f"═" * 36 + "\n"
+        f"► EVENTOS ASISTIDOS : {asistidos}\n"
+        f"► EVENTOS FALTADOS  : {faltas}\n"
+        f"► TOTAL REGISTROS   : {total}\n"
+        f"► FIABILIDAD        : [{bar}] {ratio:.1f}%\n"
+        f"═" * 36 + "```"
+    )

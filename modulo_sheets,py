@@ -1,0 +1,18 @@
+import gspread
+
+# Se conecta usando el archivo JSON que descargaste
+gc = gspread.service_account(filename="credenciales.json")
+
+def guardar_inscripcion_sheet(nombre_hoja: str, usuario: str, evento: str, opcion: str):
+    """Añade una fila con la inscripción al Google Sheet especificado."""
+    try:
+        # Abre la hoja de cálculo por su nombre
+        documento = gc.open(nombre_hoja)
+        hoja = documento.sheet1  # Primera pestaña
+        
+        # Añade los datos al final
+        hoja.append_row([usuario, evento, opcion])
+        return True
+    except Exception as e:
+        print(f"Error al escribir en Google Sheets: {e}")
+        return False

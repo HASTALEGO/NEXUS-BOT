@@ -1,6 +1,6 @@
 """Embeds y vistas persistentes de un evento.
 
-Vive en su propio modulo para que `main` y `creador_eventos` puedan compartirlo
+Vive en su propio módulo para que `main` y `creador_eventos` puedan compartirlo
 sin importarse mutuamente.
 """
 import logging
@@ -10,7 +10,20 @@ import discord
 
 from database import conectar_db
 from formatters import (
-    COLOR_BLANCO, a_utc_iso, ahora, desde_iso, formatear_duracion, timestamp_discord,
+    COLOR_MONOCHROME,
+    ICON_ALERT,
+    ICON_BULLET,
+    ICON_CHECK,
+    ICON_CROSS,
+    ICON_NOTE,
+    a_utc_iso,
+    ahora,
+    desde_iso,
+    format_inscritos_opcion,
+    format_retro_embed_description,
+    format_retro_header,
+    formatear_duracion,
+    timestamp_discord,
 )
 from modulo_valoraciones import FeedbackModal
 
@@ -43,6 +56,18 @@ def evento_finalizado(evento) -> bool:
     return bool(fin and ahora() >= fin)
 
 
+def inscripciones_cerradas_por_tiempo(evento) -> bool:
+    """Comprueba si las inscripciones se han cerrado debido a close_before_minutes."""
+    inicio = inicio_evento(evento)
+    if not inicio:
+        return False
+    minutos_cierre = evento["close_before_minutes"] or 0
+    if minutos_cierre <= 0:
+        return False
+    momento_cierre = inicio - timedelta(minutes=minutos_cierre)
+    return ahora() >= momento_cierre
+
+
 def _recortar(texto: str, limite: int = MAX_LONGITUD_CAMPO) -> str:
     if len(texto) <= limite:
         return texto
@@ -50,7 +75,7 @@ def _recortar(texto: str, limite: int = MAX_LONGITUD_CAMPO) -> str:
 
 
 def trocear_menciones(menciones: list, limite: int = 1900) -> list:
-    """Discord rechaza mensajes de mas de 2000 caracteres."""
+    """Discord rechaza mensajes de más de 2000 caracteres."""
     bloques, actual = [], ""
     for mencion in menciones:
         if len(actual) + len(mencion) + 1 > limite:
@@ -100,7 +125,7 @@ def crear_embed_publicado(evento_id: int) -> discord.Embed:
     try:
         evento = conn.execute("SELECT * FROM eventos WHERE id = ?", (evento_id,)).fetchone()
         if not evento:
-            return discord.Embed(title="Evento no encontrado", color=COLOR_BLANCO)
+            return discord.Embed(title="EVENTO NO ENCONTRADO", color=COLOR_MONOCHROME)
 
         opciones = conn.execute(
             "SELECT * FROM opciones_inscripcion WHERE event_id = ? ORDER BY id", (evento_id,)
@@ -114,58 +139,61 @@ def crear_embed_publicado(evento_id: int) -> discord.Embed:
 
     inicio = inicio_evento(evento)
     finalizado = evento_finalizado(evento)
-
-    embed = discord.Embed(
-        title=f"{'🔒 [FINALIZADO] ' if finalizado else ''}► EVENTO: {evento['title']} ◄",
-        description=evento["description"] or "",
-        color=discord.Color.dark_gray() if finalizado
-        else discord.Color(evento["color"] if isinstance(evento["color"], int) else COLOR_BLANCO),
-    )
-    embed.add_field(name="► Organizador", value=f"<@{evento['creator_id']}>", inline=True)
-    if inicio:
-        embed.add_field(name="► Hora de inicio", value=f"<t:{timestamp_discord(inicio)}:F>", inline=True)
-    embed.add_field(name="► Duracion", value=formatear_duracion(evento["duration_minutes"]), inline=True)
-    embed.add_field(name="► Frecuencia", value=evento["frequency"], inline=True)
+    cerrado_tiempo = inscripciones_cerradas_por_tiempo(evento)
 
     guild = _bot.get_guild(evento["guild_id"]) if _bot else None
+    canal_voz_str = None
+
     if evento["location_channel_id"]:
         if guild and (canal := guild.get_channel(evento["location_channel_id"])):
-            embed.add_field(name="► Ubicacion", value=canal.mention, inline=True)
+            canal_voz_str = canal.mention
     elif evento["auto_voice"]:
         canal_voz = guild.get_channel(evento["auto_voice_channel_id"]) if guild and evento["auto_voice_channel_id"] else None
-        embed.add_field(
-            name="► Ubicacion",
-            value=canal_voz.mention if canal_voz else "♪ Canal de voz temporal (se crea al empezar) ♪",
-            inline=True,
-        )
+        canal_voz_str = canal_voz.mention if canal_voz else f"{ICON_NOTE} Canal de voz temporal (se crea al empezar)"
 
-    embed.add_field(name="► Calendario", value="📌 Añadido automáticamente al `/calendario` del servidor.", inline=False)
+    creador_mention = f"<@{evento['creator_id']}>"
+    descripcion_formatted = format_retro_embed_description(
+        desc=evento["description"],
+        creador_mention=creador_mention,
+        start_time_iso=evento["start_time"],
+        duracion=evento["duration_minutes"],
+        canal_voz=canal_voz_str,
+        close_before_minutes=evento["close_before_minutes"] or 0
+    )
+
+    prefix = "🔒 [FINALIZADO]" if finalizado else ("⛔ [INSCRIPCIONES CERRADAS]" if cerrado_tiempo else "►")
+    embed = discord.Embed(
+        title=f"{prefix} EVENTO: {evento['title'].upper()}",
+        description=descripcion_formatted,
+        color=discord.Color.dark_gray() if (finalizado or cerrado_tiempo) else COLOR_MONOCHROME,
+    )
 
     for op in opciones[:MAX_CAMPOS_OPCIONES]:
         confirmados = [f"<@{i['user_id']}>" for i in inscripciones
                        if i["option_id"] == op["id"] and i["status"] == "confirmado"]
-        reservas = [f"<@{i['user_id']}> *(#{i['position']})*" for i in inscripciones
+        reservas = [f"<@{i['user_id']}>" for i in inscripciones
                     if i["option_id"] == op["id"] and i["status"] == "espera"]
 
-        plazas = f"{len(confirmados)}/{op['max_slots']}" if op["max_slots"] else str(len(confirmados))
-        cuerpo = "\n".join(f"• {u}" for u in confirmados) if confirmados else "*Sin participantes*"
-        if reservas:
-            cuerpo += "\n**Reserva:**\n" + "\n".join(f"• {u}" for u in reservas)
-
-        embed.add_field(name=f"§ {op['name']} ({plazas})"[:256], value=_recortar(cuerpo), inline=True)
+        campo_texto = format_inscritos_opcion(
+            nombre_opcion=op["name"],
+            confirmados=confirmados,
+            reserva=reservas,
+            max_slots=op["max_slots"]
+        )
+        embed.add_field(name="\u200b", value=_recortar(campo_texto), inline=False)
 
     if len(opciones) > MAX_CAMPOS_OPCIONES:
         embed.add_field(
-            name="§ …",
-            value=f"*Hay {len(opciones) - MAX_CAMPOS_OPCIONES} opciones mas. Usa `/exportar_evento` para verlas todas.*",
+            name="► …",
+            value=f"*Hay {len(opciones) - MAX_CAMPOS_OPCIONES} opciones más. Usa `/exportar_evento` para verlas todas.*",
             inline=False,
         )
 
     if evento["image_url"]:
         embed.set_image(url=evento["image_url"])
-    embed.set_footer(
-        text=f"ID del evento: #{evento_id} | " + ("Evento finalizado" if finalizado else "Inscripciones abiertas")
-    )
+
+    estado_footer = "Finalizado" if finalizado else ("Inscripciones cerradas" if cerrado_tiempo else "Inscripciones abiertas")
+    embed.set_footer(text=f"ID del evento: #{evento_id} | {estado_footer}")
     return embed
 
 
@@ -182,9 +210,9 @@ def _motivo_restriccion(conn, evento, usuario) -> str | None:
         return None
     roles_usuario = {r.id for r in getattr(usuario, "roles", [])}
     if bloqueados & roles_usuario:
-        return "‼ Tu rol no puede inscribirse en este evento."
+        return f"{ICON_ALERT} Tu rol tiene bloqueada la inscripción a este evento."
     if permitidos and not (permitidos & roles_usuario):
-        return "‼ Este evento esta reservado a roles concretos."
+        return f"{ICON_ALERT} Este evento está reservado para roles específicos."
     return None
 
 
@@ -195,11 +223,18 @@ async def inscribirse(interaction: discord.Interaction, event_id: int, option_id
     try:
         evento = conn.execute("SELECT * FROM eventos WHERE id = ?", (event_id,)).fetchone()
         if not evento:
-            msg = await interaction.followup.send("‼ Este evento ya no existe.", ephemeral=True)
+            msg = await interaction.followup.send(f"{ICON_ALERT} Este evento ya no existe.", ephemeral=True)
             await msg.delete(delay=3)
             return
         if evento_finalizado(evento):
             msg = await interaction.followup.send("🔒 Este evento ya ha finalizado.", ephemeral=True)
+            await msg.delete(delay=3)
+            return
+        if inscripciones_cerradas_por_tiempo(evento):
+            msg = await interaction.followup.send(
+                f"{ICON_ALERT} Las inscripciones para este evento se cerraron {evento['close_before_minutes']} minutos antes del inicio.",
+                ephemeral=True
+            )
             await msg.delete(delay=3)
             return
 
@@ -212,7 +247,7 @@ async def inscribirse(interaction: discord.Interaction, event_id: int, option_id
             "SELECT * FROM opciones_inscripcion WHERE id = ? AND event_id = ?", (option_id, event_id)
         ).fetchone()
         if not opcion:
-            msg = await interaction.followup.send("‼ Esta opción ya no existe.", ephemeral=True)
+            msg = await interaction.followup.send(f"{ICON_ALERT} Esta opción ya no existe.", ephemeral=True)
             await msg.delete(delay=3)
             return
 
@@ -225,8 +260,8 @@ async def inscribirse(interaction: discord.Interaction, event_id: int, option_id
                 ).fetchone()
                 if otra:
                     conn.rollback()
-                    mensaje = ("‼ Ya estás registrado en esta opción." if otra["option_id"] == option_id
-                               else "‼ Este evento solo permite una inscripción por persona. Cancela la actual primero.")
+                    mensaje = (f"{ICON_ALERT} Ya estás registrado en esta opción." if otra["option_id"] == option_id
+                               else f"{ICON_ALERT} Este evento no permite inscripción múltiple. Cancela tu registro previo primero.")
                     msg = await interaction.followup.send(mensaje, ephemeral=True)
                     await msg.delete(delay=3)
                     return
@@ -235,7 +270,7 @@ async def inscribirse(interaction: discord.Interaction, event_id: int, option_id
                 (event_id, option_id, interaction.user.id),
             ).fetchone():
                 conn.rollback()
-                msg = await interaction.followup.send("‼ Ya estás registrado en esta opción.", ephemeral=True)
+                msg = await interaction.followup.send(f"{ICON_ALERT} Ya estás registrado en esta opción.", ephemeral=True)
                 await msg.delete(delay=3)
                 return
 
@@ -248,7 +283,7 @@ async def inscribirse(interaction: discord.Interaction, event_id: int, option_id
                 if not evento["allow_waitlist"]:
                     conn.rollback()
                     msg = await interaction.followup.send(
-                        f"‼ **{opcion['name']}** está completa y este evento no admite lista de espera.",
+                        f"{ICON_ALERT} **{opcion['name']}** está completa y no se admite lista de espera.",
                         ephemeral=True,
                     )
                     await msg.delete(delay=3)
@@ -274,15 +309,14 @@ async def inscribirse(interaction: discord.Interaction, event_id: int, option_id
     finally:
         conn.close()
 
-    msg = await interaction.followup.send(f"► Inscripción actualizada para **{nombre_opcion}**.", ephemeral=True)
+    msg = await interaction.followup.send(f"{ICON_BULLET} Inscripción actualizada: **{nombre_opcion}**.", ephemeral=True)
     await msg.delete(delay=3)
 
     try:
         hilo = await obtener_o_crear_hilo(interaction.guild, datos_evento)
         if hilo:
-            texto = (f"✅ {interaction.user.mention} se ha inscrito en **{nombre_opcion}**." if status == "confirmado"
-                     else f"⏳ {interaction.user.mention} entró en reserva (#{pos}) para **{nombre_opcion}**.")
-            # Borra el mensaje enviado al hilo tras 3 segundos
+            texto = (f"[{ICON_CHECK}] {interaction.user.mention} se ha inscrito en **{nombre_opcion}**." if status == "confirmado"
+                     else f"[{ICON_ALERT}] {interaction.user.mention} entró en reserva (#{pos}) para **{nombre_opcion}**.")
             msg_hilo = await hilo.send(texto)
             await msg_hilo.delete(delay=3)
     except discord.HTTPException as e:
@@ -307,7 +341,7 @@ async def cancelar_inscripcion(interaction: discord.Interaction, event_id: int):
             (event_id, interaction.user.id),
         ).fetchall()
         if not registros:
-            msg = await interaction.followup.send("‼ No estás inscrito.", ephemeral=True)
+            msg = await interaction.followup.send(f"{ICON_ALERT} No estás inscrito en ninguna opción.", ephemeral=True)
             await msg.delete(delay=3)
             return
 
@@ -319,7 +353,7 @@ async def cancelar_inscripcion(interaction: discord.Interaction, event_id: int):
     finally:
         conn.close()
 
-    msg = await interaction.followup.send("► Has cancelado tu inscripción.", ephemeral=True)
+    msg = await interaction.followup.send(f"{ICON_BULLET} Has cancelado tu inscripción.", ephemeral=True)
     await msg.delete(delay=3)
 
     for option_id in liberadas:
@@ -329,19 +363,19 @@ async def cancelar_inscripcion(interaction: discord.Interaction, event_id: int):
         try:
             hilo = await obtener_o_crear_hilo(interaction.guild, datos_evento)
             if hilo:
-                msg_hilo = await hilo.send(f"❌ {interaction.user.mention} canceló su inscripción.")
-                # Borra el mensaje enviado al hilo tras 3 segundos
+                msg_hilo = await hilo.send(f"[{ICON_CROSS}] {interaction.user.mention} canceló su inscripción.")
                 await msg_hilo.delete(delay=3)
         except discord.HTTPException as e:
             log.warning("No se pudo avisar en el hilo del evento %s: %s", event_id, e)
 
     await actualizar_evento_publicado(event_id)
 
+
 class BotonInscripcionDinamico(discord.ui.Button):
     def __init__(self, option_id: int, label: str, event_id: int):
         super().__init__(
             label=label,
-            style=discord.ButtonStyle.secondary,  # Gris neutro para todas las opciones
+            style=discord.ButtonStyle.secondary,
             custom_id=f"evento_{event_id}_opt_{option_id}"
         )
         self.evento_id = event_id
@@ -365,27 +399,15 @@ class EventoView(discord.ui.View):
         finally:
             conn.close()
 
-        # Generar un botón neutro únicamente con el símbolo ASCII/emoji de cada opción
         for op in opciones:
-            nombre = op["name"].upper()
-            if "ACEPTO" in nombre or "CONFIRMAR" in nombre:
-                simbolo = "✅"
-            elif "RECHAZO" in nombre or "CANCELAR" in nombre:
-                simbolo = "❌"
-            elif "INDECISO" in nombre or "DUDA" in nombre:
-                simbolo = "❓"
-            else:
-                simbolo = op["name"][:80]  # Fallback si se usa otra opción personalizada
-
             self.add_item(BotonInscripcionDinamico(
                 option_id=op["id"], 
-                label=simbolo, 
+                label=op["name"][:80], 
                 event_id=evento_id
             ))
 
-        # Botón para cancelar la inscripción (gris neutro)
         btn_cancelar = discord.ui.Button(
-            label="Cancelar inscripción", 
+            label="X Cancelar", 
             style=discord.ButtonStyle.secondary,
             custom_id=f"evento_{evento_id}_cancelar",
             row=4
@@ -397,9 +419,8 @@ class EventoView(discord.ui.View):
         btn_cancelar.callback = canc_cb
         self.add_item(btn_cancelar)
 
-        # Botón para valorar el evento (gris neutro)
         btn_feedback = discord.ui.Button(
-            label="Valorar evento", 
+            label="★ Valorar", 
             style=discord.ButtonStyle.secondary,
             custom_id=f"evento_{evento_id}_feedback",
             row=4
@@ -508,19 +529,23 @@ async def promover_lista_espera(bot, event_id: int, option_id: int):
             hilo = await obtener_o_crear_hilo(guild, datos_evento)
             if hilo:
                 await hilo.send(
-                    f"🎉 <@{promovido}> ha sido promovido/a de la lista de espera a **CONFIRMADO** "
-                    f"para la opción **{opcion['name']}**."
+                    f"[{ICON_CHECK}] <@{promovido}> ha sido promovido/a de la reserva a **CONFIRMADO** "
+                    f"para **{opcion['name']}**."
                 )
         except discord.HTTPException as e:
-            log.warning("No se pudo avisar de la promocion en el evento %s: %s", event_id, e)
+            log.warning("No se pudo avisar de la promoción en el evento %s: %s", event_id, e)
 
     try:
         usuario = await bot.fetch_user(promovido)
+        desc = (
+            f"► Has sido promovido de la lista de espera a **CONFIRMADO**.\n\n"
+            f"├─ Evento: **{datos_evento['title']}**\n"
+            f"└─ Opción: **{opcion['name']}**"
+        )
         embed = discord.Embed(
-            title="☼ PLAZA CONFIRMADA EN EVENTO ☼",
-            description=f"► Has sido promovido de la lista de espera a **CONFIRMADO**.\n\n"
-                        f"§ Evento: **{datos_evento['title']}**\n§ Opcion: **{opcion['name']}**",
-            color=COLOR_BLANCO,
+            title="PLAZA CONFIRMADA EN EVENTO",
+            description=desc,
+            color=COLOR_MONOCHROME,
         )
         await usuario.send(embed=embed)
     except discord.HTTPException:
