@@ -51,6 +51,7 @@ async def ejecutar_creador_lineal(bot: commands.Bot, interaction: discord.Intera
             
             # Cada paso envía un embed NUEVO en vez de sustituir el anterior.
             msg_asistente = await usuario.send(embed=embed)
+            log.info("Paso '%s' enviado a %s", titulo, usuario.id)
             return msg_asistente
 
         async def esperar_respuesta():
@@ -59,8 +60,10 @@ async def ejecutar_creador_lineal(bot: commands.Bot, interaction: discord.Intera
             try:
                 msg = await bot.wait_for("message", check=check, timeout=TIMEOUT_PASO)
                 c = msg.content.strip()
+                log.info("DM de %s recibido (%d caracteres): %r", usuario.id, len(c), c[:80])
                 return "CANCEL" if c.lower() == "cancel" else c
             except asyncio.TimeoutError:
+                log.warning("Sin respuesta de %s tras %ss (timeout)", usuario.id, TIMEOUT_PASO)
                 return "TIMEOUT"
 
         error_actual = None
