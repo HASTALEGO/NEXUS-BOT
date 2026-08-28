@@ -42,12 +42,6 @@ class _Asistente:
         embed = discord.Embed(title=titulo, description=descripcion, color=COLOR_BLANCO)
         if mostrar_cancelar:
             embed.set_footer(text="► Escribe 'cancel' en cualquier momento para cancelar ◄")
-        if self.msg:
-            try:
-                await self.msg.edit(embed=embed)
-                return self.msg
-            except discord.HTTPException:
-                self.msg = None
         self.msg = await self.usuario.send(embed=embed)
         return self.msg
 
@@ -401,6 +395,16 @@ async def iniciar_repetir_evento(bot: commands.Bot, interaction: discord.Interac
         elegido = await _paginador_eventos(flujo, eventos)
         if elegido is None:
             return await flujo.enviar("CANCELADO", "‼ Reutilización cancelada.", False)
+
+        # El selector devuelve un resumen; cargamos la fila completa para clonar todos los campos.
+        conn = conectar_db()
+        try:
+            completo = conn.execute("SELECT * FROM eventos WHERE id = ?", (elegido["id"],)).fetchone()
+        finally:
+            conn.close()
+        if not completo:
+            return await flujo.enviar("ERROR", "‼ El evento original ya no existe.", False)
+        elegido = completo
 
         # Nueva fecha y hora (obligatorio)
         while True:

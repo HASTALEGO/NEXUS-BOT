@@ -49,14 +49,7 @@ async def ejecutar_creador_lineal(bot: commands.Bot, interaction: discord.Intera
             if mostrar_cancelar:
                 embed.set_footer(text="► Escribe 'cancel' en cualquier momento para cancelar ◄")
             
-            # Intenta editar el mensaje existente para no saturar el chat de DMs
-            if msg_asistente:
-                try:
-                    await msg_asistente.edit(embed=embed)
-                    return msg_asistente
-                except (discord.HTTPException, discord.NotFound):
-                    msg_asistente = None
-            
+            # Cada paso envía un embed NUEVO en vez de sustituir el anterior.
             msg_asistente = await usuario.send(embed=embed)
             return msg_asistente
 

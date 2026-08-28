@@ -25,8 +25,18 @@ def configurar_modulo_perfil(bot: commands.Bot):
     @app_commands.guild_only()
     async def cmd_mi_perfil(interaction: discord.Interaction):
         stats = obtener_perfil_usuario(interaction.user.id)
-        texto = format_perfil_asistencia(interaction.user.mention, stats)
-        await interaction.response.send_message(texto, ephemeral=True)
+        if stats["total"] == 0:
+            return await interaction.response.send_message(
+                "◄ ◄ ◄ NOTA: no tienes ninguna asistencia registrada todavía. "
+                "Cuando completes una misión y el organizador marque tu asistencia, aquí aparecerá tu fichaje. ► ► ►",
+                ephemeral=True,
+            )
+        embed = discord.Embed(
+            title="§ PERFIL DE ASISTENCIA §",
+            description=format_perfil_asistencia(interaction.user.mention, stats),
+            color=COLOR_BLANCO,
+        )
+        await interaction.response.send_message(embed=embed, ephemeral=True)
 
     @bot.tree.command(name="mis_valoraciones", description="Muestra las valoraciones de tus eventos.")
     @app_commands.describe(evento_id="ID del evento (opcional): reseñas individuales de ese evento")

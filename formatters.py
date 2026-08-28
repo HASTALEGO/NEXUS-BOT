@@ -175,7 +175,18 @@ def format_perfil_asistencia(user_mention: str, stats: dict) -> str:
     asistidos = stats["asistidos"]
     faltas = stats["faltas"]
     ratio = stats["ratio"]
-    
+
+    if total == 0:
+        return (
+            f"```{ICON_PARAGRAPH} PERFIL DE ASISTENCIA: {user_mention}\n"
+            f"═" * 36 + "\n"
+            f"► EVENTOS ASISTIDOS : 0\n"
+            f"► EVENTOS FALTADOS  : 0\n"
+            f"► TOTAL REGISTROS   : 0\n"
+            f"► FIABILIDAD        : Sin datos aun\n"
+            f"═" * 36 + "```"
+        )
+
     bar_length = 10
     filled = int(round((ratio / 100) * bar_length))
     bar = "█" * filled + "░" * (bar_length - filled)

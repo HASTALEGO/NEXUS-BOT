@@ -384,7 +384,7 @@ def obtener_perfil_usuario(user_id: int) -> dict:
         total = row["total"] or 0
         asistidos = row["asistidos"] or 0
         faltas = row["faltas"] or 0
-        ratio = (asistidos / total * 100) if total > 0 else 100.0
+        ratio = (asistidos / total * 100) if total > 0 else 0.0
         return {"total": total, "asistidos": asistidos, "faltas": faltas, "ratio": ratio}
     finally:
         conn.close()
