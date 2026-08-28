@@ -314,6 +314,20 @@ async def cancelar_inscripcion(interaction: discord.Interaction, event_id: int):
     await actualizar_evento_publicado(event_id)
 
 
+class BotonInscripcionDinamico(discord.ui.Button):
+    def __init__(self, option_id: int, label: str, event_id: int):
+        super().__init__(
+            label=label[:80],
+            style=discord.ButtonStyle.secondary,  # Gris neutro para todas las opciones
+            custom_id=f"evento_{event_id}_opt_{option_id}"
+        )
+        self.evento_id = event_id
+        self.option_id = option_id
+
+    async def callback(self, interaction: discord.Interaction):
+        await inscribirse(interaction, self.evento_id, self.option_id)
+
+
 class EventoView(discord.ui.View):
     def __init__(self, evento_id: int):
         super().__init__(timeout=None)
@@ -322,38 +336,40 @@ class EventoView(discord.ui.View):
         conn = conectar_db()
         try:
             opciones = conn.execute(
-                "SELECT * FROM opciones_inscripcion WHERE event_id = ? ORDER BY id LIMIT 25", (evento_id,)
+                "SELECT * FROM opciones_inscripcion WHERE event_id = ? ORDER BY id LIMIT 20", 
+                (evento_id,)
             ).fetchall()
         finally:
             conn.close()
 
-        if opciones:
-            selector = discord.ui.Select(
-                placeholder="► Elige tu opción para inscribirte",
-                options=[discord.SelectOption(label=op["name"][:100], value=str(op["id"])) for op in opciones],
-                custom_id=f"evento_{evento_id}_opciones",
-            )
+        # Generar un botón neutro por cada opción en la base de datos
+        for op in opciones:
+            self.add_item(BotonInscripcionDinamico(
+                option_id=op["id"], 
+                label=op["name"], 
+                event_id=evento_id
+            ))
 
-            async def sel_cb(interaction: discord.Interaction):
-                await inscribirse(interaction, self.evento_id, int(selector.values[0]))
+        # Botón para cancelar la inscripción (gris neutro)
+        btn_cancelar = discord.ui.Button(
+            label="Cancelar inscripción", 
+            style=discord.ButtonStyle.secondary,
+            custom_id=f"evento_{evento_id}_cancelar",
+            row=4
+        )
 
-            selector.callback = sel_cb
-            self.add_item(selector)
+        async def canc_cb(interaction: discord.Interaction):
+            await cancelar_inscripcion(interaction, self.evento_id)
 
-            btn_cancelar = discord.ui.Button(
-                label="Cancelar inscripción", style=discord.ButtonStyle.danger,
-                custom_id=f"evento_{evento_id}_cancelar",
-            )
+        btn_cancelar.callback = canc_cb
+        self.add_item(btn_cancelar)
 
-            async def canc_cb(interaction: discord.Interaction):
-                await cancelar_inscripcion(interaction, self.evento_id)
-
-            btn_cancelar.callback = canc_cb
-            self.add_item(btn_cancelar)
-
+        # Botón para valorar el evento (gris neutro)
         btn_feedback = discord.ui.Button(
-            label="Valorar evento", style=discord.ButtonStyle.primary,
+            label="Valorar evento", 
+            style=discord.ButtonStyle.secondary,
             custom_id=f"evento_{evento_id}_feedback",
+            row=4
         )
 
         async def fb_cb(interaction: discord.Interaction):
@@ -361,7 +377,6 @@ class EventoView(discord.ui.View):
 
         btn_feedback.callback = fb_cb
         self.add_item(btn_feedback)
-
 
 async def publicar_evento(evento_id: int, canal: discord.abc.Messageable, menciones: str | None = None):
     """Publica el anuncio del evento, abre su hilo y registra la vista persistente."""
