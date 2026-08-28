@@ -7,7 +7,7 @@ from formatters import TIMEZONE
 
 log = logging.getLogger(__name__)
 
-DATABASE = os.getenv("DATABASE_PATH", "eventos.db")[cite: 1]
+DATABASE = os.getenv("DATABASE_PATH", "eventos.db")
 ESQUEMA_VERSION = 1
 
 # Configuración de respaldo en la nube
@@ -168,10 +168,10 @@ TABLAS_HIJAS = [
 ]
 
 def conectar_db():
-    conn = sqlite3.connect(DATABASE, timeout=30, isolation_level=None)[cite: 1]
-    conn.row_factory = sqlite3.Row[cite: 1]
-    conn.execute("PRAGMA journal_mode=WAL")[cite: 1]
-    conn.execute("PRAGMA foreign_keys=ON")[cite: 1]
+    conn = sqlite3.connect(DATABASE, timeout=30, isolation_level=None)
+    conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA journal_mode=WAL")
+    conn.execute("PRAGMA foreign_keys=ON")
     return conn
 
 def _aplicar_sql(conn, guion):
@@ -273,8 +273,8 @@ def _reconstruir_con_claves_foraneas(conn):
         conn.execute(f"DROP TABLE {tabla}_old")
 
 def inicializar_db():
-    descargar_db_remota()  # <--- Descarga el archivo desde Supabase al arrancar
-    conn = conectar_db()[cite: 1]
+    descargar_db_remota()
+    conn = conectar_db()
     try:
         conn.execute("PRAGMA foreign_keys=OFF")
         conn.execute("BEGIN IMMEDIATE")
