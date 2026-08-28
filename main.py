@@ -367,13 +367,10 @@ async def cmd_marcar_asistencia(interaction: discord.Interaction, evento_id: int
 
 @bot.event
 async def on_ready():
-    # 1. Limpia todos los comandos locales o globales antiguos
-    # bot.tree.clear_commands(guild=discord.Object(id=ID_DE_TU_SERVIDOR)) # Si usaste guild específico
-    
-    # 2. Sincroniza el árbol limpio con Discord
+    bot.tree.clear_commands(guild=None)
     await bot.tree.sync()
-    print(f"Comandos sincronizados correctamente como {bot.user}")
-    
+    print("Comandos limpiados de la API de Discord.")
+ 
 keep_alive()
 
 if __name__ == "__main__":
