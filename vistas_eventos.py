@@ -195,18 +195,26 @@ async def inscribirse(interaction: discord.Interaction, event_id: int, option_id
     try:
         evento = conn.execute("SELECT * FROM eventos WHERE id = ?", (event_id,)).fetchone()
         if not evento:
-            return await interaction.followup.send("‼ Este evento ya no existe.", ephemeral=True)
+            msg = await interaction.followup.send("‼ Este evento ya no existe.", ephemeral=True)
+            await msg.delete(delay=10)
+            return
         if evento_finalizado(evento):
-            return await interaction.followup.send("🔒 Este evento ya ha finalizado.", ephemeral=True)
+            msg = await interaction.followup.send("🔒 Este evento ya ha finalizado.", ephemeral=True)
+            await msg.delete(delay=10)
+            return
 
         if (motivo := _motivo_restriccion(conn, evento, interaction.user)):
-            return await interaction.followup.send(motivo, ephemeral=True)
+            msg = await interaction.followup.send(motivo, ephemeral=True)
+            await msg.delete(delay=10)
+            return
 
         opcion = conn.execute(
             "SELECT * FROM opciones_inscripcion WHERE id = ? AND event_id = ?", (option_id, event_id)
         ).fetchone()
         if not opcion:
-            return await interaction.followup.send("‼ Esta opción ya no existe.", ephemeral=True)
+            msg = await interaction.followup.send("‼ Esta opción ya no existe.", ephemeral=True)
+            await msg.delete(delay=10)
+            return
 
         conn.execute("BEGIN IMMEDIATE")
         try:
@@ -219,13 +227,17 @@ async def inscribirse(interaction: discord.Interaction, event_id: int, option_id
                     conn.rollback()
                     mensaje = ("‼ Ya estás registrado en esta opción." if otra["option_id"] == option_id
                                else "‼ Este evento solo permite una inscripción por persona. Cancela la actual primero.")
-                    return await interaction.followup.send(mensaje, ephemeral=True)
+                    msg = await interaction.followup.send(mensaje, ephemeral=True)
+                    await msg.delete(delay=10)
+                    return
             elif conn.execute(
                 "SELECT 1 FROM inscripciones WHERE event_id = ? AND option_id = ? AND user_id = ?",
                 (event_id, option_id, interaction.user.id),
             ).fetchone():
                 conn.rollback()
-                return await interaction.followup.send("‼ Ya estás registrado en esta opción.", ephemeral=True)
+                msg = await interaction.followup.send("‼ Ya estás registrado en esta opción.", ephemeral=True)
+                await msg.delete(delay=10)
+                return
 
             confirmados = conn.execute(
                 "SELECT COUNT(*) FROM inscripciones WHERE option_id = ? AND status = 'confirmado'", (option_id,)
@@ -235,10 +247,12 @@ async def inscribirse(interaction: discord.Interaction, event_id: int, option_id
             if opcion["max_slots"] and confirmados >= opcion["max_slots"]:
                 if not evento["allow_waitlist"]:
                     conn.rollback()
-                    return await interaction.followup.send(
+                    msg = await interaction.followup.send(
                         f"‼ **{opcion['name']}** está completa y este evento no admite lista de espera.",
                         ephemeral=True,
                     )
+                    await msg.delete(delay=10)
+                    return
                 status = "espera"
                 pos = conn.execute(
                     "SELECT COALESCE(MAX(position), 0) FROM inscripciones WHERE option_id = ? AND status = 'espera'",
@@ -260,14 +274,17 @@ async def inscribirse(interaction: discord.Interaction, event_id: int, option_id
     finally:
         conn.close()
 
-    await interaction.followup.send(f"► Inscripción actualizada para **{nombre_opcion}**.", ephemeral=True)
+    msg = await interaction.followup.send(f"► Inscripción actualizada para **{nombre_opcion}**.", ephemeral=True)
+    await msg.delete(delay=10)
 
     try:
         hilo = await obtener_o_crear_hilo(interaction.guild, datos_evento)
         if hilo:
             texto = (f"✅ {interaction.user.mention} se ha inscrito en **{nombre_opcion}**." if status == "confirmado"
                      else f"⏳ {interaction.user.mention} entró en reserva (#{pos}) para **{nombre_opcion}**.")
-            await hilo.send(texto)
+            # Borra el mensaje enviado al hilo tras 10 segundos
+            msg_hilo = await hilo.send(texto)
+            await msg_hilo.delete(delay=10)
     except discord.HTTPException as e:
         log.warning("No se pudo avisar en el hilo del evento %s: %s", event_id, e)
 
@@ -281,14 +298,18 @@ async def cancelar_inscripcion(interaction: discord.Interaction, event_id: int):
     try:
         evento = conn.execute("SELECT * FROM eventos WHERE id = ?", (event_id,)).fetchone()
         if evento and evento_finalizado(evento):
-            return await interaction.followup.send("🔒 El evento ya ha finalizado.", ephemeral=True)
+            msg = await interaction.followup.send("🔒 El evento ya ha finalizado.", ephemeral=True)
+            await msg.delete(delay=10)
+            return
 
         registros = conn.execute(
             "SELECT option_id, status FROM inscripciones WHERE event_id = ? AND user_id = ?",
             (event_id, interaction.user.id),
         ).fetchall()
         if not registros:
-            return await interaction.followup.send("‼ No estás inscrito.", ephemeral=True)
+            msg = await interaction.followup.send("‼ No estás inscrito.", ephemeral=True)
+            await msg.delete(delay=10)
+            return
 
         conn.execute("DELETE FROM inscripciones WHERE event_id = ? AND user_id = ?", (event_id, interaction.user.id))
         conn.commit()
@@ -298,7 +319,8 @@ async def cancelar_inscripcion(interaction: discord.Interaction, event_id: int):
     finally:
         conn.close()
 
-    await interaction.followup.send("► Has cancelado tu inscripción.", ephemeral=True)
+    msg = await interaction.followup.send("► Has cancelado tu inscripción.", ephemeral=True)
+    await msg.delete(delay=10)
 
     for option_id in liberadas:
         await promover_lista_espera(_bot, event_id, option_id)
@@ -307,12 +329,13 @@ async def cancelar_inscripcion(interaction: discord.Interaction, event_id: int):
         try:
             hilo = await obtener_o_crear_hilo(interaction.guild, datos_evento)
             if hilo:
-                await hilo.send(f"❌ {interaction.user.mention} canceló su inscripción.")
+                msg_hilo = await hilo.send(f"❌ {interaction.user.mention} canceló su inscripción.")
+                # Borra el mensaje enviado al hilo tras 10 segundos
+                await msg_hilo.delete(delay=10)
         except discord.HTTPException as e:
             log.warning("No se pudo avisar en el hilo del evento %s: %s", event_id, e)
 
     await actualizar_evento_publicado(event_id)
-
 
 class BotonInscripcionDinamico(discord.ui.Button):
     def __init__(self, option_id: int, label: str, event_id: int):
