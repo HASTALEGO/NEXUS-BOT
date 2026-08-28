@@ -242,7 +242,7 @@ async def cmd_status(interaction: discord.Interaction):
         )
 
     embed = discord.Embed(
-        title="📊 ESTADO DEL SISTEMA — NEXUS BOT",
+        title="ESTADO DE NEXUS BOT",
         color=COLOR_BLANCO
     )
     
