@@ -254,7 +254,7 @@ class BotEventos(commands.Bot):
         inicializar_vistas(self)
 
         log_evento("STATUS", "Cargando extensión status_checker...", "INFO")
-        await self.load_extension("status_checker")
+       # await self.load_extension("status_checker")
 
         log_evento("MODULES", "Registrando eventos, calendario y valoraciones...", "INFO")
         configurar_creador_eventos(self)
@@ -287,6 +287,33 @@ intents.members = True
 intents.message_content = True
 bot = BotEventos(command_prefix="!", intents=intents)
 
+from status_checker import obtener_estado_sistema
+
+@bot.tree.command(name="status", description="Muestra el estado del sistema y métricas del servidor.")
+async def cmd_status(interaction: discord.Interaction):
+    await interaction.response.defer(ephemeral=True)
+
+    datos = obtener_estado_sistema()
+
+    if not datos:
+        return await interaction.followup.send(
+            "‼ No se pudo obtener el estado del servidor local en este momento.", 
+            ephemeral=True
+        )
+
+    embed = discord.Embed(
+        title="📊 ESTADO DEL SISTEMA — NEXUS BOT",
+        color=COLOR_BLANCO
+    )
+    
+    for clave, valor in datos.items():
+        embed.add_field(
+            name=f"► {clave.replace('_', ' ').capitalize()}", 
+            value=f"`{valor}`", 
+            inline=True
+        )
+
+    await interaction.followup.send(embed=embed, ephemeral=True)
 
 @bot.tree.command(name="exportar_evento", description="Exporta los datos de un evento a archivo CSV.")
 @app_commands.default_permissions(administrator=True)

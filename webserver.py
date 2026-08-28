@@ -4,22 +4,27 @@ import logging
 import os
 from threading import Thread
 
-from flask import Flask
+from flask import Flask, jsonify
 
 log = logging.getLogger("bot_eventos.webserver")
 
 app = Flask(__name__)
 
 
-@app.route("/")
-def index():
-    return "NEXUS BOT activo", 200
+@app.route('/')
+def home():
+    return "Bot en línea"
 
+@app.route('/status')
+def status():
+    return jsonify({
+        "estado": "Online",
+        "bot": "Activo"
+    })
 
 def run():
-    # El host asigna el puerto por la variable PORT; 8000 solo como valor local.
-    app.run(host="0.0.0.0", port=int(os.getenv("PORT", "8000")), debug=False, use_reloader=False)
-
+    port = int(os.getenv("PORT", 8000))
+    app.run(host='0.0.0.0', port=port)
 
 def keep_alive():
     """Arranca el servidor en segundo plano. Daemon para que no impida cerrar el bot."""
