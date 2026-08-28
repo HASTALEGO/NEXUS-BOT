@@ -11,6 +11,7 @@ from discord import app_commands
 from discord.ext import commands, tasks
 
 # 1. Módulos locales y base de datos
+from database import conectar_db, inicializar_db, guardar_db_remota
 from creador_eventos import configurar_creador_eventos
 from database import conectar_db, inicializar_db
 from formatters import COLOR_BLANCO, a_utc_iso, ahora, timestamp_discord
@@ -186,6 +187,7 @@ async def tareas_eventos():
         await gestionar_ciclo_de_vida(conn, ahora_actual)
     finally:
         conn.close()
+    guardar_db_remota()
 
 @tareas_eventos.before_loop
 async def antes_de_tareas():
@@ -275,9 +277,17 @@ async def cmd_exportar_evento(interaction: discord.Interaction, evento_id: int):
 # ... (todo tu código anterior se mantiene igual)
 
 @bot.event
+@bot.event
 async def on_ready():
-    log.info(f"Bot conectado exitosamente como: {bot.user.name}")
+    # Limpia comandos locales/específicos del servidor para eliminar duplicados
+    for guild in bot.guilds:
+        bot.tree.clear_commands(guild=guild)
+        await bot.tree.sync(guild=guild)
 
+    # Sincroniza únicamente la lista global
+    await bot.tree.sync()
+    print("Sincronización global completada y comandos locales limpiados.")
+    
 if __name__ == "__main__":
     # 1. Arrancamos el servidor HTTP para pasar el Health Check de Render
     keep_alive()
