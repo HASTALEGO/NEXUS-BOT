@@ -4,7 +4,7 @@ import discord
 from discord.ext import commands
 
 # URL obtenida de tus registros de Render
-RENDER_URL = "https://nexus-bot-0i5m.onrender.com"
+RENDER_URL = "https://nexus-bot-j8l9.onrender.com"
 
 class StatusChecker(commands.Cog):
     def __init__(self, bot):
