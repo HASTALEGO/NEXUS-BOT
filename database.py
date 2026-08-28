@@ -29,7 +29,7 @@ def descargar_db_remota():
         log.info("Base de datos restaurada desde la nube con éxito.")
     except Exception as e:
         log.info("No se encontró respaldo remoto previo (inicio limpio o primer despliegue).")
-        
+
 def guardar_db_remota():
     """Suba el archivo eventos.db a la nube."""
     if not SUPABASE_URL or not SUPABASE_KEY or not os.path.exists(DATABASE):
@@ -304,3 +304,5 @@ def inicializar_db():
     finally:
         conn.execute("PRAGMA foreign_keys=ON")
         conn.close()
+
+# perro
