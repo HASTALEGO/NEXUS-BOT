@@ -364,10 +364,6 @@ async def cmd_marcar_asistencia(interaction: discord.Interaction, evento_id: int
         f"► Registrado: {usuario.mention} {estado} al evento #{evento_id}.", ephemeral=True
     )
 
-@bot.tree.error
-async def on_app_command_completion(interaction: discord.Interaction, command: app_commands.Command):
-    print(f"Comando execute: /{command.name} | Usuario: {interaction.user}")
-
 @bot.event
 async def on_ready():
     bot.tree.clear_commands(guild=None)
