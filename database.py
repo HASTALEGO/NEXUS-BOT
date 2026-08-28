@@ -8,7 +8,7 @@ from formatters import TIMEZONE
 log = logging.getLogger(__name__)
 
 DATABASE = os.getenv("DATABASE_PATH", "eventos.db")
-ESQUEMA_VERSION = 2  # Incrementado para la nueva migración del sistema retro y valoraciones
+ESQUEMA_VERSION = 3  # v3: autorrol+preferencias de feedback y dm_reminders por evento
 
 # Configuración y limpieza de URL de Supabase
 RAW_SUPABASE_URL = os.getenv("SUPABASE_URL", "")
@@ -90,6 +90,7 @@ CREATE TABLE IF NOT EXISTS eventos (
     parent_event_id INTEGER DEFAULT NULL REFERENCES eventos(id) ON DELETE SET NULL,
     close_before_minutes INTEGER DEFAULT 0,
     attendance_checked INTEGER DEFAULT 0,
+    dm_reminders INTEGER DEFAULT 1,
     created_at TEXT NOT NULL
 );
 
@@ -150,6 +151,11 @@ CREATE TABLE IF NOT EXISTS feedback (
 
 CREATE TABLE IF NOT EXISTS roles_bloqueados (role_id INTEGER PRIMARY KEY);
 CREATE TABLE IF NOT EXISTS roles_mencionables (role_id INTEGER PRIMARY KEY);
+CREATE TABLE IF NOT EXISTS roles_valoracion (role_id INTEGER PRIMARY KEY);
+CREATE TABLE IF NOT EXISTS preferencias_usuario (
+    user_id INTEGER PRIMARY KEY,
+    recibir_feedback INTEGER NOT NULL DEFAULT 1
+);
 """
 
 INDICES = """
@@ -178,6 +184,7 @@ COLUMNAS_ESPERADAS = {
         "parent_event_id": "INTEGER DEFAULT NULL REFERENCES eventos(id) ON DELETE SET NULL",
         "close_before_minutes": "INTEGER DEFAULT 0",
         "attendance_checked": "INTEGER DEFAULT 0",
+        "dm_reminders": "INTEGER DEFAULT 1",
         "created_at": "TEXT",
     },
     "opciones_inscripcion": {"emoji": "TEXT", "max_slots": "INTEGER"},
@@ -227,6 +234,7 @@ def _rellenar_nulos(conn):
         ("eventos", "created_at", ahora_utc),
         ("eventos", "close_before_minutes", 0),
         ("eventos", "attendance_checked", 0),
+        ("eventos", "dm_reminders", 1),
         ("inscripciones", "created_at", ahora_utc),
         ("inscripciones", "status", "confirmado"),
         ("asistencia", "registered_at", ahora_utc),
@@ -424,5 +432,132 @@ def obtener_detalles_feedback_evento(event_id: int) -> list:
                OR f.event_id IN (SELECT id FROM eventos WHERE parent_event_id = ?);
         """, (event_id, event_id))
         return cursor.fetchall()
+    finally:
+        conn.close()
+
+# --- PREFERENCIAS DE FEEDBACK POR DM Y AUTORROL DE VALORACIONES ---
+
+def obtener_preferencia_feedback(user_id: int) -> bool:
+    """True si el usuario quiere recibir DMs de valoración (opt-out: default True)."""
+    conn = conectar_db()
+    try:
+        fila = conn.execute(
+            "SELECT recibir_feedback FROM preferencias_usuario WHERE user_id = ?", (user_id,)
+        ).fetchone()
+        return bool(fila["recibir_feedback"]) if fila else True
+    finally:
+        conn.close()
+
+def setear_preferencia_feedback(user_id: int, recibir: bool):
+    conn = conectar_db()
+    try:
+        conn.execute("""
+            INSERT INTO preferencias_usuario (user_id, recibir_feedback)
+            VALUES (?, ?)
+            ON CONFLICT(user_id) DO UPDATE SET recibir_feedback = excluded.recibir_feedback
+        """, (user_id, 1 if recibir else 0))
+        conn.commit()
+    finally:
+        conn.close()
+
+def listar_roles_valoracion() -> list:
+    conn = conectar_db()
+    try:
+        filas = conn.execute("SELECT role_id FROM roles_valoracion").fetchall()
+        return [f["role_id"] for f in filas]
+    finally:
+        conn.close()
+
+def configurar_rol_valoracion(role_id: int):
+    conn = conectar_db()
+    try:
+        conn.execute("INSERT INTO roles_valoracion (role_id) VALUES (?)", (role_id,))
+        conn.commit()
+    finally:
+        conn.close()
+
+def remover_rol_valoracion(role_id: int):
+    conn = conectar_db()
+    try:
+        conn.execute("DELETE FROM roles_valoracion WHERE role_id = ?", (role_id,))
+        conn.commit()
+    finally:
+        conn.close()
+
+def debe_enviar_feedback(user_id: int, roles_usuario: set) -> bool:
+    """Regla del punto 3: envia por DM si la preferencia individual lo permite
+    (opt-out) y, si hay autorrol configurado, el usuario tiene ese rol."""
+    if not obtener_preferencia_feedback(user_id):
+        return False
+    roles_configurados = set(listar_roles_valoracion())
+    if not roles_configurados:
+        return True
+    return bool(roles_configurados & set(roles_usuario))
+
+# --- CONSULTAS PARA FLUJOS DM, EDICION Y REPETICION ---
+
+def obtener_inscritos_evento(event_id: int) -> list:
+    """Inscritos confirmados o en espera de un evento (para DM y asistencia)."""
+    conn = conectar_db()
+    try:
+        cursor = conn.execute("""
+            SELECT i.user_id, i.status, i.position, o.name AS opcion
+            FROM inscripciones i
+            JOIN opciones_inscripcion o ON o.id = i.option_id
+            WHERE i.event_id = ? AND i.status = 'confirmado'
+            ORDER BY o.id, i.id
+        """, (event_id,))
+        return cursor.fetchall()
+    finally:
+        conn.close()
+
+def obtener_eventos_creador(creator_id: int, guild_id: int) -> list:
+    """Eventos del creador (ordenados por inicio descendente) para /mis_valoraciones y /repetir_evento."""
+    conn = conectar_db()
+    try:
+        cursor = conn.execute("""
+            SELECT e.id, e.title, e.start_time, e.frequency, e.duration_minutes,
+                   (SELECT COUNT(*) FROM inscripciones i WHERE i.event_id = e.id) AS inscritos
+            FROM eventos e
+            WHERE e.creator_id = ? AND e.guild_id = ?
+            ORDER BY e.start_time DESC
+        """, (creator_id, guild_id))
+        return cursor.fetchall()
+    finally:
+        conn.close()
+
+def obtener_evento_pendiente_asistencia(guild_id: int) -> list:
+    """Eventos finalizados aun no procesados por su creador (punto 2)."""
+    conn = conectar_db()
+    try:
+        cursor = conn.execute("""
+            SELECT * FROM eventos
+            WHERE guild_id = ? AND attendance_checked = 0
+              AND start_time IS NOT NULL AND duration_minutes > 0
+        """, (guild_id,))
+        return cursor.fetchall()
+    finally:
+        conn.close()
+
+def actualizar_campos_evento(event_id: int, **campos):
+    """Actualiza los campos dados de un evento de forma segura."""
+    if not campos:
+        return
+    conn = conectar_db()
+    try:
+        columnas = ", ".join(f"{c} = ?" for c in campos)
+        conn.execute(f"UPDATE eventos SET {columnas} WHERE id = ?", (*campos.values(), event_id))
+        conn.commit()
+    finally:
+        conn.close()
+
+def actualizar_opcion(option_id: int, nombre: str = None, max_slots: int = None):
+    conn = conectar_db()
+    try:
+        if nombre is not None:
+            conn.execute("UPDATE opciones_inscripcion SET name = ? WHERE id = ?", (nombre, option_id))
+        if max_slots is not None:
+            conn.execute("UPDATE opciones_inscripcion SET max_slots = ? WHERE id = ?", (max_slots, option_id))
+        conn.commit()
     finally:
         conn.close()

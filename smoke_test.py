@@ -133,6 +133,55 @@ async def main():
     await v.inscribirse(i, ev, op)
     assert "finalizado" in respuesta(i).lower(), respuesta(i)
 
+    # 7. Cierre automático de inscripciones directas (punto 9)
+    ev = crear_evento(start_time=f.a_utc_iso(f.ahora() + timedelta(hours=5)), close_before_minutes=360)
+    op = crear_opcion(ev, 5)
+    i = interaccion(10)
+    await v.inscribirse(i, ev, op)
+    assert "inscripciones" in respuesta(i).lower() and "cerr" in respuesta(i).lower(), respuesta(i)
+    assert inscripciones(ev) == [], inscripciones(ev)
+
+    # 8. Tras el cierre, la lista de espera sigue promoviendo (punto 9)
+    ev = crear_evento(start_time=f.a_utc_iso(f.ahora() + timedelta(hours=5)))
+    op = crear_opcion(ev, 1)
+    await v.inscribirse(interaccion(10), ev, op)
+    await v.inscribirse(interaccion(11), ev, op)
+    assert inscripciones(ev) == [(10, "confirmado", 0), (11, "espera", 1)], inscripciones(ev)
+    database.actualizar_campos_evento(ev, close_before_minutes=360)
+    i = interaccion(12)
+    await v.inscribirse(i, ev, op)
+    assert "inscripciones" in respuesta(i).lower() and "cerr" in respuesta(i).lower(), respuesta(i)
+    await v.cancelar_inscripcion(interaccion(10), ev)
+    assert inscripciones(ev) == [(11, "confirmado", 0)], inscripciones(ev)
+
+    # 9. Preferencias de feedback y autorrol (punto 3)
+    database.remover_rol_valoracion(99)
+    assert database.debe_enviar_feedback(20, {}) is True
+    database.setear_preferencia_feedback(20, False)
+    assert database.debe_enviar_feedback(20, {99}) is False
+    database.setear_preferencia_feedback(20, True)
+    database.configurar_rol_valoracion(99)
+    assert database.debe_enviar_feedback(20, {1}) is False
+    assert database.debe_enviar_feedback(20, {99}) is True
+    database.setear_preferencia_feedback(20, False)
+    assert database.debe_enviar_feedback(20, {99}) is False
+    database.setear_preferencia_feedback(20, True)
+    database.remover_rol_valoracion(99)
+    assert database.debe_enviar_feedback(20, {}) is True
+
+    # 10. Registro de asistencia, perfil y marcado de revisión (puntos 2 y 8)
+    database.registrar_asistencia(ev, 20, True)
+    database.registrar_asistencia(ev, 20, False)
+    perfil = database.obtener_perfil_usuario(20)
+    assert perfil["total"] == 1 and perfil["asistidos"] == 0 and perfil["faltas"] == 1, perfil
+    database.marcar_asistencia_revisada(ev)
+    conn = database.conectar_db()
+    try:
+        marcado = conn.execute("SELECT attendance_checked FROM eventos WHERE id = ?", (ev,)).fetchone()[0]
+    finally:
+        conn.close()
+    assert marcado == 1, marcado
+
     print("smoke test OK")
 
 asyncio.run(main())

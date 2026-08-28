@@ -3,6 +3,7 @@
 Vive en su propio módulo para que `main` y `creador_eventos` puedan compartirlo
 sin importarse mutuamente.
 """
+import asyncio
 import logging
 from datetime import timedelta
 
@@ -13,8 +14,10 @@ from formatters import (
     COLOR_MONOCHROME,
     ICON_ALERT,
     ICON_BULLET,
+    ICON_CERRADO,
     ICON_CHECK,
     ICON_CROSS,
+    ICON_FINALIZADO,
     ICON_NOTE,
     a_utc_iso,
     ahora,
@@ -161,7 +164,7 @@ def crear_embed_publicado(evento_id: int) -> discord.Embed:
         close_before_minutes=evento["close_before_minutes"] or 0
     )
 
-    prefix = "🔒 [FINALIZADO]" if finalizado else ("⛔ [INSCRIPCIONES CERRADAS]" if cerrado_tiempo else "►")
+    prefix = f"{ICON_FINALIZADO} [FINALIZADO]" if finalizado else (f"{ICON_CERRADO} [INSCRIPCIONES CERRADAS]" if cerrado_tiempo else "►")
     embed = discord.Embed(
         title=f"{prefix} EVENTO: {evento['title'].upper()}",
         description=descripcion_formatted,
@@ -227,7 +230,7 @@ async def inscribirse(interaction: discord.Interaction, event_id: int, option_id
             await msg.delete(delay=3)
             return
         if evento_finalizado(evento):
-            msg = await interaction.followup.send("🔒 Este evento ya ha finalizado.", ephemeral=True)
+            msg = await interaction.followup.send(f"{ICON_FINALIZADO} Este evento ya ha finalizado.", ephemeral=True)
             await msg.delete(delay=3)
             return
         if inscripciones_cerradas_por_tiempo(evento):
@@ -332,7 +335,7 @@ async def cancelar_inscripcion(interaction: discord.Interaction, event_id: int):
     try:
         evento = conn.execute("SELECT * FROM eventos WHERE id = ?", (event_id,)).fetchone()
         if evento and evento_finalizado(evento):
-            msg = await interaction.followup.send("🔒 El evento ya ha finalizado.", ephemeral=True)
+            msg = await interaction.followup.send(f"{ICON_FINALIZADO} El evento ya ha finalizado.", ephemeral=True)
             await msg.delete(delay=3)
             return
 
@@ -431,6 +434,38 @@ class EventoView(discord.ui.View):
 
         btn_feedback.callback = fb_cb
         self.add_item(btn_feedback)
+
+        btn_editar = discord.ui.Button(
+            label="Editar", 
+            style=discord.ButtonStyle.secondary,
+            custom_id=f"evento_{evento_id}_editar",
+            row=4
+        )
+
+        async def edit_cb(interaction: discord.Interaction):
+            """Punto 6: solo el creador del evento puede abrir el asistente de edición."""
+            conn = conectar_db()
+            try:
+                ev = conn.execute(
+                    "SELECT creator_id FROM eventos WHERE id = ?", (self.evento_id,)
+                ).fetchone()
+            finally:
+                conn.close()
+            if not ev:
+                return await interaction.response.send_message(
+                    f"{ICON_ALERT} Este evento ya no existe.", ephemeral=True
+                )
+            if interaction.user.id != ev["creator_id"]:
+                return await interaction.response.send_message(
+                    f"{ICON_ALERT} Solo el organizador del evento puede editarlo.", ephemeral=True
+                )
+            from modulo_edicion import iniciar_edicion_evento
+            await interaction.response.defer(ephemeral=True)
+            await interaction.followup.send("► Asistente de edición enviado por DM.", ephemeral=True)
+            asyncio.create_task(iniciar_edicion_evento(_bot, self.evento_id, interaction))
+
+        btn_editar.callback = edit_cb
+        self.add_item(btn_editar)
 
 
 async def publicar_evento(evento_id: int, canal: discord.abc.Messageable, menciones: str | None = None):

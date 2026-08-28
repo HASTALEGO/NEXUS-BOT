@@ -38,7 +38,8 @@ async def ejecutar_creador_lineal(bot: commands.Bot, interaction: discord.Intera
             "duration_minutes": None, "frequency": "Una vez", "signup_options": [],
             "multiple_registrations": False, "allow_waitlist": True, "mention_roles": [],
             "restricted_roles": [], "color_name": "Blanco", "color": 0xFFFFFF,
-            "image_url": None, "location": None, "auto_voice": False, "reminders": []
+            "image_url": None, "location": None, "auto_voice": False, "reminders": [],
+            "close_before_minutes": 0, "dm_reminders": True
         }
 
         async def enviar_paso(titulo: str, descripcion: str, aviso_error: str = None, mostrar_cancelar: bool = True):
@@ -187,7 +188,7 @@ async def ejecutar_creador_lineal(bot: commands.Bot, interaction: discord.Intera
 
         # PASO 7: Opciones de inscripción predeterminadas
         datos["signup_options"] = [
-            {"name": "[✓] Acepto", "max_slots": None},
+            {"name": "[√] Acepto", "max_slots": None},
             {"name": "[X] Rechazo", "max_slots": None},
             {"name": "[?] Indeciso", "max_slots": None}
         ]
@@ -398,6 +399,40 @@ async def ejecutar_creador_lineal(bot: commands.Bot, interaction: discord.Intera
                 break
             error_actual = "Formato de recordatorios inválido. Ejemplo: '1h, 30m'"
 
+        # PASO 14B: Cierre automático de inscripciones directas
+        while True:
+            desc = ("► Cuánto antes de la hora de inicio se cierran las inscripciones DIRECTAS.\n"
+                    "► La lista de espera sigue activa y promueve aunque esté cerrado.\n\n"
+                    "► Ejemplos: 30m, 1h, 2h 30m\n"
+                    "► Escribe 'ninguno' para no cerrar inscripciones (todas abiertas).")
+            await enviar_paso("¿CIERRE AUTOMÁTICO DE INSCRIPCIONES?", desc, error_actual)
+            error_actual, resp = None, await esperar_respuesta()
+            if resp in ("TIMEOUT", "CANCEL"): 
+                return await enviar_paso("CREACIÓN CANCELADA", "‼ Cancelado.", mostrar_cancelar=False)
+            if resp.lower() in ("ninguno", "no", "none", "0"):
+                datos["close_before_minutes"] = 0
+                break
+            cnt = resp.lower()
+            h = re.search(r"(\d+)\s*h", cnt)
+            m = re.search(r"(\d+)\s*m", cnt)
+            tot = (int(h.group(1)) * 60 if h else 0) + (int(m.group(1)) if m else 0)
+            if tot > 0:
+                datos["close_before_minutes"] = tot
+                break
+            error_actual = "Formato inválido. Ejemplo: '30m', '1h', '1h 30m'"
+
+        # PASO 14C: Recordatorios privados por DM
+        while True:
+            desc = "► [1] Sí (Enviar DM a cada confirmado antes del inicio)\n► [2] No (Solo avisos en el hilo)\n\n§ Introduce 1 o 2:"
+            await enviar_paso("¿RECORDATORIOS PRIVADOS POR DM?", desc, error_actual)
+            error_actual, resp = None, await esperar_respuesta()
+            if resp in ("TIMEOUT", "CANCEL"): 
+                return await enviar_paso("CREACIÓN CANCELADA", "‼ Cancelado.", mostrar_cancelar=False)
+            if resp in ("1", "2"):
+                datos["dm_reminders"] = (resp == "1")
+                break
+            error_actual = "Introduce 1 o 2."
+
         # PASO 15: Resumen y Publicación
         resumen = [
             f"► Organizador: {usuario.mention}",
@@ -409,7 +444,9 @@ async def ejecutar_creador_lineal(bot: commands.Bot, interaction: discord.Intera
             f"► Lista de Espera: {'Habilitada' if datos['allow_waitlist'] else 'Deshabilitada'}",
             f"► Acceso Restringido: {', '.join('@' + r.name for r in datos['restricted_roles']) or 'Todo el servidor'}",
             f"► Voz Automática: {'Sí' if datos['auto_voice'] else 'No'}",
-            f"► Recordatorios: {formatear_recordatorios(datos['reminders'])}"
+            f"► Recordatorios: {formatear_recordatorios(datos['reminders'])}",
+            f"► Cierre de Inscripciones: {formatear_duracion(datos['close_before_minutes']) if datos['close_before_minutes'] else 'Ninguno'} antes del inicio",
+            f"► Recordatorios por DM: {'Sí' if datos['dm_reminders'] else 'No'}"
         ]
         desc_final = "╔════════════════════════════════════════╗\n          RESUMEN DEL EVENTO\n╚════════════════════════════════════════╝\n\n" + "\n".join(resumen) + "\n\n► [1] Publicar Evento\n► [2] Cancelar\n\n§ Introduce 1 o 2:"
 
@@ -436,14 +473,15 @@ async def ejecutar_creador_lineal(bot: commands.Bot, interaction: discord.Intera
                 cursor = conn.execute("""
                     INSERT INTO eventos (guild_id, channel_id, creator_id, title, description, start_time,
                                          duration_minutes, frequency, color, location_channel_id, auto_voice,
-                                         image_url, multiple_registrations, allow_waitlist, created_at)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                                         image_url, multiple_registrations, allow_waitlist, created_at,
+                                         close_before_minutes, dm_reminders)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """, (
                     guild.id, canal.id, usuario.id, datos["title"], datos["description"],
                     a_utc_iso(datos["start_time"]), datos["duration_minutes"], datos["frequency"],
                     datos["color"], loc_id, 1 if datos["auto_voice"] else 0, datos["image_url"],
                     1 if datos["multiple_registrations"] else 0, 1 if datos["allow_waitlist"] else 0,
-                    a_utc_iso(ahora()),
+                    a_utc_iso(ahora()), datos["close_before_minutes"], 1 if datos["dm_reminders"] else 0,
                 ))
                 evento_id = cursor.lastrowid
 
@@ -474,7 +512,7 @@ async def ejecutar_creador_lineal(bot: commands.Bot, interaction: discord.Intera
         _, hilo = await publicar_evento(evento_id, canal, menciones_str)
         if hilo:
             await hilo.send(
-                f"📌 **Hilo del evento iniciado.** Canal oficial para recordatorios y avisos "
+                f"{ICON_BULLET} **Hilo del evento iniciado.** Canal oficial para recordatorios y avisos "
                 f"del evento de {usuario.mention}."
             )
 

@@ -5,7 +5,7 @@ from discord import app_commands
 from discord.ext import commands
 
 from database import conectar_db
-from formatters import TIMEZONE, COLOR_BLANCO, a_utc_iso, ahora, desde_iso, nombre_mes, timestamp_discord
+from formatters import TIMEZONE, COLOR_BLANCO, ICON_NOTE, a_utc_iso, ahora, desde_iso, nombre_mes, timestamp_discord
 
 class CalendarioView(discord.ui.View):
     def __init__(self, anio: int, mes: int, user_id: int, guild_id: int):
@@ -38,7 +38,7 @@ class CalendarioView(discord.ui.View):
             conn.close()
 
         embed = discord.Embed(
-            title=f"📅 CALENDARIO DE EVENTOS Y MISIONES — {nombre_mes(self.mes)} {self.anio}",
+            title=f"§ CALENDARIO DE EVENTOS Y MISIONES — {nombre_mes(self.mes)} {self.anio}",
             color=COLOR_BLANCO
         )
 
@@ -53,7 +53,7 @@ class CalendarioView(discord.ui.View):
                 continue
             lineas.append(
                 f"► **#{ev['id']} {ev['title']}**\n"
-                f"  └ 🕒 <t:{timestamp_discord(inicio)}:f> (<t:{timestamp_discord(inicio)}:R>)"
+                f"  └ {ICON_NOTE} <t:{timestamp_discord(inicio)}:f> (<t:{timestamp_discord(inicio)}:R>)"
             )
 
         embed.description = "\n\n".join(lineas)[:4096]
@@ -71,7 +71,7 @@ class CalendarioView(discord.ui.View):
         embed = self.obtener_embed()
         await interaction.response.edit_message(embed=embed, view=self)
 
-    @discord.ui.button(label="Hoy 📌", style=discord.ButtonStyle.primary, custom_id="cal_today")
+    @discord.ui.button(label="Hoy", style=discord.ButtonStyle.primary, custom_id="cal_today")
     async def mes_actual(self, interaction: discord.Interaction, button: discord.ui.Button):
         ahora_dt = ahora()
         self.anio = ahora_dt.year

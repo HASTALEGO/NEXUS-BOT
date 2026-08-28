@@ -23,6 +23,8 @@ ICON_GENDER_MALE = "♂"
 ICON_GENDER_FEMALE = "♀"
 ICON_PARAGRAPH = "§"
 ICON_PILCROW = "¶"
+ICON_FINALIZADO = "▬"
+ICON_CERRADO = "▓"
 
 # Escala de grises estricta (Sin colores estrafalarios)
 COLOR_MONOCHROME = 0x2B2D31  # Gris neutro oscuro para Embeds

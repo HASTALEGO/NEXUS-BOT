@@ -15,7 +15,10 @@ from creador_eventos import configurar_creador_eventos
 from database import conectar_db, guardar_db_remota, inicializar_db
 from formatters import COLOR_BLANCO, a_utc_iso, ahora, timestamp_discord
 from modulo_calendario import configurar_modulo_calendario
+from modulo_asistencia import desencadenar_asistencia
 from modulo_valoraciones import registrar_comandos_valoraciones
+from modulo_edicion import configurar_modulo_edicion
+from modulo_perfil import configurar_modulo_perfil
 from modulos_eventos import eliminar_voz_temporal, generar_csv_evento, gestionar_voz_temporal
 from status_checker import obtener_estado_sistema
 from vistas_eventos import (
@@ -64,14 +67,16 @@ def clonar_evento(evento, nuevo_inicio: datetime) -> int:
         cursor = conn.execute("""
             INSERT INTO eventos (guild_id, channel_id, creator_id, title, description, start_time,
                                  duration_minutes, frequency, color, location_channel_id, auto_voice,
-                                 image_url, multiple_registrations, allow_waitlist, created_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                                 image_url, multiple_registrations, allow_waitlist, created_at,
+                                 parent_event_id, close_before_minutes, dm_reminders)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (
             evento["guild_id"], evento["channel_id"], evento["creator_id"], evento["title"],
             evento["description"], a_utc_iso(nuevo_inicio), evento["duration_minutes"],
             evento["frequency"], evento["color"], evento["location_channel_id"], evento["auto_voice"],
             evento["image_url"], evento["multiple_registrations"], evento["allow_waitlist"],
-            a_utc_iso(ahora()),
+            a_utc_iso(ahora()), evento["parent_event_id"] or evento["id"],
+            evento["close_before_minutes"] or 0, evento["dm_reminders"] if evento["dm_reminders"] is not None else 1,
         ))
         nuevo_id = cursor.lastrowid
         conn.execute("INSERT INTO opciones_inscripcion (event_id, name, emoji, max_slots) SELECT ?, name, emoji, max_slots FROM opciones_inscripcion WHERE event_id = ?", (nuevo_id, evento["id"]))
@@ -90,7 +95,8 @@ def clonar_evento(evento, nuevo_inicio: datetime) -> int:
 async def enviar_recordatorios(conn, ahora_actual):
     pendientes = conn.execute("""
         SELECT r.id AS reminder_id, r.minutes_before, e.id AS id, e.guild_id, e.channel_id,
-               e.message_id, e.thread_id, e.title, e.start_time, e.duration_minutes
+               e.message_id, e.thread_id, e.title, e.start_time, e.duration_minutes,
+               e.dm_reminders, e.location_channel_id, e.auto_voice_channel_id
         FROM recordatorios r JOIN eventos e ON r.event_id = e.id
         WHERE r.sent = 0
     """).fetchall()
@@ -102,18 +108,47 @@ async def enviar_recordatorios(conn, ahora_actual):
         try:
             guild = bot.get_guild(rec["guild_id"])
             if guild and ahora_actual < inicio:
+                usuarios = conn.execute(
+                    "SELECT DISTINCT user_id FROM inscripciones WHERE event_id = ? AND status = 'confirmado'",
+                    (rec["id"],),
+                ).fetchall()
+
                 hilo = await obtener_o_crear_hilo(guild, rec)
                 if hilo:
-                    usuarios = conn.execute(
-                        "SELECT DISTINCT user_id FROM inscripciones WHERE event_id = ? AND status = 'confirmado'",
-                        (rec["id"],),
-                    ).fetchall()
                     await hilo.send(
                         f"☼ **RECORDATORIO DE MISIÓN**\n"
                         f"► La misión **{rec['title']}** empieza <t:{timestamp_discord(inicio)}:R>"
                     )
                     for bloque in trocear_menciones([f"<@{u['user_id']}>" for u in usuarios]):
                         await hilo.send(bloque, allowed_mentions=discord.AllowedMentions(users=True))
+
+                # Punto 7: recordatorio PRIVADO por DM a cada confirmado cuando el creador lo activa
+                if rec["dm_reminders"] and usuarios:
+                    ubicacion = None
+                    if rec["location_channel_id"]:
+                        ch = guild.get_channel(rec["location_channel_id"])
+                        if ch:
+                            ubicacion = ch.mention
+                    elif rec["auto_voice_channel_id"]:
+                        ch = guild.get_channel(rec["auto_voice_channel_id"])
+                        if ch:
+                            ubicacion = ch.mention
+                    for fila in usuarios:
+                        try:
+                            usuario = await bot.fetch_user(fila["user_id"])
+                            embed = discord.Embed(
+                                title="☼ RECORDATORIO DE MISIÓN",
+                                description=(
+                                    f"► **{rec['title']}**\n\n"
+                                    f"► Inicio: <t:{timestamp_discord(inicio)}:F> (<t:{timestamp_discord(inicio)}:R>)\n"
+                                    + (f"► Ubicación: {ubicacion}\n" if ubicacion else "")
+                                    + "► Preséntate puntualmente en el lugar indicado. ¡Nos vemos!"
+                                ),
+                                color=COLOR_BLANCO,
+                            )
+                            await usuario.send(embed=embed)
+                        except discord.HTTPException:
+                            log.warning("No se pudo enviar el DM de recordatorio a %s", fila["user_id"])
         except Exception:
             log.exception("Fallo al enviar el recordatorio %s", rec["reminder_id"])
         finally:
@@ -145,6 +180,9 @@ async def gestionar_ciclo_de_vida(conn, ahora_actual):
 
 async def cerrar_evento(evento, ahora_actual):
     await actualizar_evento_publicado(evento["id"])
+
+    # Punto 2: desencadenar el control de asistencia y feedback con el creador
+    asyncio.create_task(desencadenar_asistencia(bot, evento))
 
     if evento["frequency"] not in FRECUENCIAS_REPETIBLES:
         conn = conectar_db()
@@ -212,6 +250,8 @@ class BotEventos(commands.Bot):
         configurar_creador_eventos(self)
         configurar_modulo_calendario(self)
         registrar_comandos_valoraciones(self)
+        configurar_modulo_edicion(self)
+        configurar_modulo_perfil(self)
 
         conn = conectar_db()
         try:
