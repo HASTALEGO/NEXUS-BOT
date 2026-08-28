@@ -317,7 +317,7 @@ async def cancelar_inscripcion(interaction: discord.Interaction, event_id: int):
 class BotonInscripcionDinamico(discord.ui.Button):
     def __init__(self, option_id: int, label: str, event_id: int):
         super().__init__(
-            label=label[:80],
+            label=label,
             style=discord.ButtonStyle.secondary,  # Gris neutro para todas las opciones
             custom_id=f"evento_{event_id}_opt_{option_id}"
         )
@@ -342,11 +342,21 @@ class EventoView(discord.ui.View):
         finally:
             conn.close()
 
-        # Generar un botón neutro por cada opción en la base de datos
+        # Generar un botón neutro únicamente con el símbolo ASCII/emoji de cada opción
         for op in opciones:
+            nombre = op["name"].upper()
+            if "ACEPTO" in nombre or "CONFIRMAR" in nombre:
+                simbolo = "✅"
+            elif "RECHAZO" in nombre or "CANCELAR" in nombre:
+                simbolo = "❌"
+            elif "INDECISO" in nombre or "DUDA" in nombre:
+                simbolo = "❓"
+            else:
+                simbolo = op["name"][:80]  # Fallback si se usa otra opción personalizada
+
             self.add_item(BotonInscripcionDinamico(
                 option_id=op["id"], 
-                label=op["name"], 
+                label=simbolo, 
                 event_id=evento_id
             ))
 
@@ -377,6 +387,7 @@ class EventoView(discord.ui.View):
 
         btn_feedback.callback = fb_cb
         self.add_item(btn_feedback)
+
 
 async def publicar_evento(evento_id: int, canal: discord.abc.Messageable, menciones: str | None = None):
     """Publica el anuncio del evento, abre su hilo y registra la vista persistente."""

@@ -16,6 +16,24 @@ SUPABASE_URL = RAW_SUPABASE_URL.replace("/rest/v1", "").rstrip("/") if RAW_SUPAB
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 BUCKET_NAME = "bot-backups"
 
+def crear_opciones_predeterminadas(event_id: int):
+    """Inserta las 3 opciones fijas usando solo símbolos de texto."""
+    opciones = [
+        ("✔ Aceptar", None),
+        ("✖ Rechazar", None),
+        ("? Indeciso", None)
+    ]
+    conn = conectar_db()
+    try:
+        for nombre, max_slots in opciones:
+            conn.execute(
+                "INSERT INTO opciones_inscripcion (event_id, name, max_slots) VALUES (?, ?, ?)",
+                (event_id, nombre, max_slots)
+            )
+        conn.commit()
+    finally:
+        conn.close()
+
 def descargar_db_remota():
     """Descarga eventos.db desde Supabase si existe."""
     if not SUPABASE_URL or not SUPABASE_KEY:

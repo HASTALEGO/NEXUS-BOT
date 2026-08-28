@@ -131,7 +131,7 @@ async def ejecutar_creador_lineal(bot: commands.Bot, interaction: discord.Intera
             if tot > 0: datos["duration_minutes"] = tot; break
             error_actual = "Duracion no valida."
 
-        # PASO 6: Frecuencia
+# PASO 6: Frecuencia
         frecuencias = ["Una vez", "Diariamente", "Semanalmente", "Mensualmente"]
         lista_frec = "\n".join(f"► [{i+1}] {f}" for i, f in enumerate(frecuencias))
         while True:
@@ -143,40 +143,12 @@ async def ejecutar_creador_lineal(bot: commands.Bot, interaction: discord.Intera
                 break
             error_actual = "Selecciona un numero entre 1 y 4."
 
-        # PASO 7: Inscripciones
-        while True:
-            desc = "► [1] Opcion unica ilimitada\n► [2] Crear roles/opciones con o sin limite de plazas\n► [3] Sin inscripciones (anuncio informativo)\n\n§ Introduce 1, 2 o 3:"
-            await enviar_paso("¿TIPO DE INSCRIPCIONES?", desc, error_actual)
-            error_actual, resp = None, await esperar_respuesta()
-            if resp in ("TIMEOUT", "CANCEL"): return await enviar_paso("CREACION CANCELADA", "‼ Cancelado.", mostrar_cancelar=False)
-            if resp == "1":
-                datos["signup_options"] = [{"name": "Participantes", "max_slots": None}]
-                break
-            elif resp == "3":
-                datos["signup_options"] = []
-                break
-            elif resp == "2":
-                while True:
-                    await enviar_paso("¿QUE OPCIONES DESEAS ANADIR?", "► Separa por comas. Ej: Tanque(2), DPS(5), Sanador(ilimitado)", error_actual)
-                    error_actual, resp_sub = None, await esperar_respuesta()
-                    if resp_sub in ("TIMEOUT", "CANCEL"): return await enviar_paso("CREACION CANCELADA", "‼ Cancelado.", mostrar_cancelar=False)
-                    opciones = []
-                    for parte in resp_sub.split(","):
-                        p = parte.strip()
-                        if not p: continue
-                        m = re.match(r"^(.*?)\s*\(\s*(\d+|ilimitado)\s*\)$", p, re.IGNORECASE)
-                        if m:
-                            nom, plz = m.group(1).strip(), m.group(2).lower()
-                            max_s = None if plz == "ilimitado" else int(plz)
-                        else: nom, max_s = p, None
-                        if nom: opciones.append({"name": nom[:100], "max_slots": max_s})
-                    if opciones:
-                        datos["signup_options"] = opciones
-                        break
-                    error_actual = "No se interpretaron opciones validas."
-                break
-            else: error_actual = "Introduce 1, 2 o 3."
-
+        # PASO 7: Inscripciones (Establecidas de manera predeterminada)
+        datos["signup_options"] = [
+            {"name": "[✓] Acepto", "max_slots": None},
+            {"name": "[X] Rechazo", "max_slots": None},
+            {"name": "[?] Indeciso", "max_slots": None}
+        ]              
         # PASO 8: Lista de Espera
         if datos["signup_options"]:
             while True:
