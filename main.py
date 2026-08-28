@@ -272,12 +272,15 @@ async def cmd_exportar_evento(interaction: discord.Interaction, evento_id: int):
     archivo = generar_csv_evento(evento_id)
     await interaction.response.send_message(f"► Exportación de evento #{evento_id}:", file=archivo, ephemeral=True)
 
+# ... (todo tu código anterior se mantiene igual)
+
 @bot.event
 async def on_ready():
     log.info(f"Bot conectado exitosamente como: {bot.user.name}")
 
-keep_alive()
-
 if __name__ == "__main__":
-
-    bot.run(TOKEN)
+    # 1. Arrancamos el servidor HTTP para pasar el Health Check de Render
+    keep_alive()
+    
+    # 2. Ejecutamos el bot reconectando automáticamente si hay caídas de red
+    bot.run(TOKEN, reconnect=True)

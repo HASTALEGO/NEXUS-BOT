@@ -1,22 +1,19 @@
 import os
-from flask import Flask, jsonify
-from threading import Thread
+import threading
+from flask import Flask
 
 app = Flask(__name__)
 
 @app.route('/')
 def home():
-    return "NexusBot está activo."
-
-@app.route('/status')
-def status():
-    return jsonify({"status": "online", "message": "Servidor web operativo"}), 200
+    return "Bot de Discord activo", 200
 
 def run():
-    port = int(os.environ.get("PORT", 8080))
+    # Render asigna el puerto mediante la variable de entorno PORT (por defecto 10000)
+    port = int(os.environ.get("PORT", 10000))
     app.run(host='0.0.0.0', port=port)
 
 def keep_alive():
-    t = Thread(target=run)
-    t.daemon = True
+    t = threading.Thread(target=run)
+    t.daemon = True  # Permite que el hilo finalice limpiamente si el bot se apaga
     t.start()
