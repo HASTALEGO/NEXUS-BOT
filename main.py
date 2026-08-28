@@ -276,7 +276,8 @@ async def cmd_exportar_evento(interaction: discord.Interaction, evento_id: int):
 async def on_ready():
     log.info(f"Bot conectado exitosamente como: {bot.user.name}")
 
-# 7. Ejecución Principal
+keep_alive()
+
 if __name__ == "__main__":
-    keep_alive()  # Servidor Web en hilo Daemon (1 única ejecución)
+
     bot.run(TOKEN)
