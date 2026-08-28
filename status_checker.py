@@ -46,7 +46,7 @@ async def setup(bot: commands.Bot):
             )
 
         embed = discord.Embed(
-            title="📊 ESTADO DEL SISTEMA — NEXUS BOT",
+            title="ESTADO DEL SISTEMA — NEXUS BOT",
             color=COLOR_BLANCO
         )
         
