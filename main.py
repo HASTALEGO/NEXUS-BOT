@@ -367,8 +367,13 @@ async def cmd_marcar_asistencia(interaction: discord.Interaction, evento_id: int
 
 @bot.event
 async def on_ready():
-    print("CORE_ONLINE", f"NEXUS BOT OPERATIVO COMO: {bot.user}", "OK")
-
+    # 1. Limpia todos los comandos locales o globales antiguos
+    # bot.tree.clear_commands(guild=discord.Object(id=ID_DE_TU_SERVIDOR)) # Si usaste guild específico
+    
+    # 2. Sincroniza el árbol limpio con Discord
+    await bot.tree.sync()
+    print(f"Comandos sincronizados correctamente como {bot.user}")
+    
 keep_alive()
 
 if __name__ == "__main__":
