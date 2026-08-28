@@ -41,7 +41,7 @@ async def _enviar_embed(usuario: discord.User, titulo: str, descripcion: str):
 
 def _chequeo_dm(author_id: int):
     def check(m):
-        return m.author.id == author_id and isinstance(m.channel, discord.DMChannel)
+        return m.author.id == author_id and m.guild is None
     return check
 
 

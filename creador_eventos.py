@@ -54,15 +54,11 @@ async def ejecutar_creador_lineal(bot: commands.Bot, interaction: discord.Intera
             return msg_asistente
 
         async def esperar_respuesta():
-            def check(m): 
-                return m.author.id == usuario.id and isinstance(m.channel, discord.DMChannel)
+            def check(m):
+                return m.author.id == usuario.id and m.guild is None
             try:
                 msg = await bot.wait_for("message", check=check, timeout=TIMEOUT_PASO)
                 c = msg.content.strip()
-                try:
-                    await msg.delete()
-                except discord.HTTPException:
-                    pass
                 return "CANCEL" if c.lower() == "cancel" else c
             except asyncio.TimeoutError:
                 return "TIMEOUT"
@@ -139,13 +135,14 @@ async def ejecutar_creador_lineal(bot: commands.Bot, interaction: discord.Intera
             error_actual, resp = None, await esperar_respuesta()
             if resp in ("TIMEOUT", "CANCEL"): 
                 return await enviar_paso("CREACIÓN CANCELADA", "‼ Cancelado.", mostrar_cancelar=False)
-            if resp.lower() == "ninguna": 
+            texto = resp.strip()
+            if texto.lower() == "ninguna":
                 datos["description"] = ""
                 break
-            elif len(resp) <= 2000: 
-                datos["description"] = resp
-                break
-            error_actual = "Descripción demasiado larga (máximo 2000 caracteres)."
+            if len(texto) > 2000:
+                texto = texto[:2000]
+            datos["description"] = texto
+            break
 
         # PASO 4: Fecha y Hora (lenguaje natural, en la zona horaria del usuario)
         zona_usuario = (

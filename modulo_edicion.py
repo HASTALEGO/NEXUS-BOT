@@ -60,15 +60,11 @@ class _Asistente:
 
     async def esperar(self) -> str:
         def check(m):
-            return m.author.id == self.usuario.id and isinstance(m.channel, discord.DMChannel)
+            return m.author.id == self.usuario.id and m.guild is None
         try:
             msg = await self.bot.wait_for("message", check=check, timeout=TIMEOUT_PASO)
         except asyncio.TimeoutError:
             return "TIMEOUT"
-        try:
-            await msg.delete()
-        except discord.HTTPException:
-            pass
         contenido = msg.content.strip()
         return "CANCEL" if contenido.lower() == "cancel" else contenido
 
