@@ -11,9 +11,8 @@ from discord import app_commands
 from discord.ext import commands, tasks
 
 # 1. Módulos locales y base de datos
-from database import conectar_db, inicializar_db, guardar_db_remota
 from creador_eventos import configurar_creador_eventos
-from database import conectar_db, inicializar_db
+from database import conectar_db, guardar_db_remota, inicializar_db
 from formatters import COLOR_BLANCO, a_utc_iso, ahora, timestamp_discord
 from modulo_calendario import configurar_modulo_calendario
 from modulo_valoraciones import registrar_comandos_valoraciones
@@ -187,10 +186,19 @@ async def tareas_eventos():
         await gestionar_ciclo_de_vida(conn, ahora_actual)
     finally:
         conn.close()
-    guardar_db_remota()
 
 @tareas_eventos.before_loop
 async def antes_de_tareas():
+    await bot.wait_until_ready()
+
+# Tarea programada: Respaldo automático cada 5 minutos a Supabase
+@tasks.loop(minutes=5)
+async def auto_backup():
+    log.info("Ejecutando copia de seguridad programada en Supabase...")
+    guardar_db_remota()
+
+@auto_backup.before_loop
+async def antes_de_auto_backup():
     await bot.wait_until_ready()
 
 # 5. Configuración de la clase Bot
@@ -224,6 +232,7 @@ class BotEventos(commands.Bot):
             log.info(f"Sincronizados {len(comandos)} comandos de manera GLOBAL.")
 
         tareas_eventos.start()
+        auto_backup.start()
 
 intents = discord.Intents.default()
 intents.members = True
@@ -273,10 +282,8 @@ async def cmd_exportar_evento(interaction: discord.Interaction, evento_id: int):
 
     archivo = generar_csv_evento(evento_id)
     await interaction.response.send_message(f"► Exportación de evento #{evento_id}:", file=archivo, ephemeral=True)
+    guardar_db_remota()
 
-# ... (todo tu código anterior se mantiene igual)
-
-@bot.event
 @bot.event
 async def on_ready():
     # Limpia comandos locales/específicos del servidor para eliminar duplicados
@@ -286,7 +293,7 @@ async def on_ready():
 
     # Sincroniza únicamente la lista global
     await bot.tree.sync()
-    print("Sincronización global completada y comandos locales limpiados.")
+    log.info("Sincronización global completada y comandos locales limpiados.")
     
 if __name__ == "__main__":
     # 1. Arrancamos el servidor HTTP para pasar el Health Check de Render
