@@ -512,47 +512,47 @@ async def ejecutar_creador_lineal(bot: commands.Bot, interaction: discord.Intera
 
         loc_id = datos["location"].id if datos["location"] else None
 
-        # Publicación en Base de Datos utilizando el gestor de contexto nativo
+# Publicación en Base de Datos
         conn = conectar_db()
         try:
-            with conn:
-                cursor = conn.execute("""
-                    INSERT INTO eventos (guild_id, channel_id, creator_id, title, description, start_time,
-                                         duration_minutes, frequency, color, location_channel_id, auto_voice,
-                                         image_url, multiple_registrations, allow_waitlist, created_at,
-                                         close_before_minutes, dm_reminders)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """, (
-                    guild.id, canal.id, usuario.id, datos["title"], datos["description"],
-                    a_utc_iso(datos["start_time"]), datos["duration_minutes"], datos["frequency"],
-                    datos["color"], loc_id, 1 if datos["auto_voice"] else 0, datos["image_url"],
-                    1 if datos["multiple_registrations"] else 0, 1 if datos["allow_waitlist"] else 0,
-                    a_utc_iso(ahora()), datos["close_before_minutes"], 1 if datos["dm_reminders"] else 0,
-                ))
-                evento_id = cursor.lastrowid
+            cursor = conn.execute("""
+                INSERT INTO eventos (guild_id, channel_id, creator_id, title, description, start_time,
+                                     duration_minutes, frequency, color, location_channel_id, auto_voice,
+                                     image_url, multiple_registrations, allow_waitlist, created_at,
+                                     close_before_minutes, dm_reminders)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """, (
+                guild.id, canal.id, usuario.id, datos["title"], datos["description"],
+                a_utc_iso(datos["start_time"]), datos["duration_minutes"], datos["frequency"],
+                datos["color"], loc_id, 1 if datos["auto_voice"] else 0, datos["image_url"],
+                1 if datos["multiple_registrations"] else 0, 1 if datos["allow_waitlist"] else 0,
+                a_utc_iso(ahora()), datos["close_before_minutes"], 1 if datos["dm_reminders"] else 0,
+            ))
+            evento_id = cursor.lastrowid
 
-                conn.executemany(
-                    "INSERT INTO opciones_inscripcion (event_id, name, emoji, max_slots) VALUES (?, ?, ?, ?)",
-                    [(evento_id, o["name"], "", o["max_slots"]) for o in datos["signup_options"]],
-                )
-                conn.executemany(
-                    "INSERT INTO evento_menciones (event_id, role_id) VALUES (?, ?)",
-                    [(evento_id, r.id) for r in datos["mention_roles"]],
-                )
-                conn.executemany(
-                    "INSERT INTO recordatorios (event_id, minutes_before) VALUES (?, ?)",
-                    [(evento_id, m) for m in datos["reminders"]],
-                )
+            conn.executemany(
+                "INSERT INTO opciones_inscripcion (event_id, name, emoji, max_slots) VALUES (?, ?, ?, ?)",
+                [(evento_id, o["name"], "", o["max_slots"]) for o in datos["signup_options"]],
+            )
+            conn.executemany(
+                "INSERT INTO evento_menciones (event_id, role_id) VALUES (?, ?)",
+                [(evento_id, r.id) for r in datos["mention_roles"]],
+            )
+            conn.executemany(
+                "INSERT INTO recordatorios (event_id, minutes_before) VALUES (?, ?)",
+                [(evento_id, m) for m in datos["reminders"]],
+            )
 
-                bloqueados = conn.execute("SELECT role_id FROM roles_bloqueados WHERE guild_id = ?", (guild.id,)).fetchall()
-                conn.executemany(
-                    "INSERT INTO evento_restricciones (event_id, role_id, tipo) VALUES (?, ?, ?)",
-                    [(evento_id, r.id, "permitido") for r in datos["restricted_roles"]]
-                    + [(evento_id, f["role_id"], "bloqueado") for f in bloqueados],
-                )
+            bloqueados = conn.execute("SELECT role_id FROM roles_bloqueados WHERE guild_id = ?", (guild.id,)).fetchall()
+            conn.executemany(
+                "INSERT INTO evento_restricciones (event_id, role_id, tipo) VALUES (?, ?, ?)",
+                [(evento_id, r.id, "permitido") for r in datos["restricted_roles"]]
+                + [(evento_id, f["role_id"], "bloqueado") for f in bloqueados],
+            )
+            conn.commit()
         finally:
             conn.close()
-
+            
         # Publicar evento visualmente en el canal
         menciones_str = " ".join(r.mention for r in datos["mention_roles"]) or None
         _, hilo = await publicar_evento(evento_id, canal, menciones_str)

@@ -410,7 +410,7 @@ def guardar_feedback(event_id: int, user_id: int, rating: int, comment: str):
         conn.commit()
     finally:
         conn.close()
-
+        
 def obtener_resumen_valoraciones_creador(creator_id: int) -> list:
     """Obtiene los eventos propios de un creador que tienen valoraciones acumuladas."""
     conn = conectar_db()
