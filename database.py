@@ -2,13 +2,50 @@ import logging
 import os
 import sqlite3
 from datetime import datetime, timezone
-
+from supabase import create_client
 from formatters import TIMEZONE
 
 log = logging.getLogger(__name__)
 
-DATABASE = os.getenv("DATABASE_PATH", "eventos.db")
+DATABASE = os.getenv("DATABASE_PATH", "eventos.db")[cite: 1]
 ESQUEMA_VERSION = 1
+
+# Configuración de respaldo en la nube
+SUPABASE_URL = os.getenv("SUPABASE_URL")
+SUPABASE_KEY = os.getenv("SUPABASE_KEY")
+BUCKET_NAME = "bot-backups"
+
+def descargar_db_remota():
+    """Descarga eventos.db desde Supabase si existe."""
+    if not SUPABASE_URL or not SUPABASE_KEY:
+        log.warning("Sin credenciales de Supabase. Usando DB local.")
+        return
+
+    try:
+        supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
+        data = supabase.storage.from_(BUCKET_NAME).download(DATABASE)
+        with open(DATABASE, "wb") as f:
+            f.write(data)
+        log.info("Base de datos restaurada desde la nube con éxito.")
+    except Exception as e:
+        log.warning("No se pudo descargar la DB remota (¿primer inicio?): %s", e)
+
+def guardar_db_remota():
+    """Suba el archivo eventos.db a la nube."""
+    if not SUPABASE_URL or not SUPABASE_KEY or not os.path.exists(DATABASE):
+        return
+
+    try:
+        supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
+        with open(DATABASE, "rb") as f:
+            supabase.storage.from_(BUCKET_NAME).upload(
+                path=DATABASE,
+                file=f,
+                file_options={"x-upsert": "true"}
+            )
+        log.info("Copia de seguridad guardada en la nube.")
+    except Exception as e:
+        log.error("Error guardando la DB en la nube: %s", e)
 
 ESQUEMA = """
 CREATE TABLE IF NOT EXISTS eventos (
@@ -91,11 +128,8 @@ CREATE TABLE IF NOT EXISTS feedback (
 
 CREATE TABLE IF NOT EXISTS roles_bloqueados (role_id INTEGER PRIMARY KEY);
 CREATE TABLE IF NOT EXISTS roles_mencionables (role_id INTEGER PRIMARY KEY);
-
 """
 
-# Van aparte del esquema: sobre una base antigua las columnas indexadas pueden
-# no existir todavia cuando se crean las tablas.
 INDICES = """
 CREATE INDEX IF NOT EXISTS idx_eventos_guild ON eventos(guild_id, start_time);
 CREATE INDEX IF NOT EXISTS idx_inscripciones_event ON inscripciones(event_id);
@@ -104,15 +138,12 @@ CREATE INDEX IF NOT EXISTS idx_asistencia_event ON asistencia(event_id);
 CREATE INDEX IF NOT EXISTS idx_feedback_event ON feedback(event_id);
 """
 
-# Se aplican despues de deduplicar, porque fallarian sobre datos antiguos repetidos.
 INDICES_UNICOS = """
 CREATE UNIQUE INDEX IF NOT EXISTS ux_inscripciones ON inscripciones(event_id, option_id, user_id);
 CREATE UNIQUE INDEX IF NOT EXISTS ux_asistencia ON asistencia(event_id, user_id);
 CREATE UNIQUE INDEX IF NOT EXISTS ux_feedback ON feedback(event_id, user_id);
 """
 
-# Columnas que pueden faltar en bases creadas con versiones antiguas del esquema.
-# No pueden llevar NOT NULL sin valor por defecto: ALTER TABLE lo rechaza.
 COLUMNAS_ESPERADAS = {
     "eventos": {
         "channel_id": "INTEGER", "message_id": "INTEGER", "thread_id": "INTEGER",
@@ -136,33 +167,25 @@ TABLAS_HIJAS = [
     "evento_restricciones", "recordatorios", "asistencia", "feedback",
 ]
 
-
 def conectar_db():
-    conn = sqlite3.connect(DATABASE, timeout=30, isolation_level=None)
-    conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA journal_mode=WAL")
-    conn.execute("PRAGMA foreign_keys=ON")
+    conn = sqlite3.connect(DATABASE, timeout=30, isolation_level=None)[cite: 1]
+    conn.row_factory = sqlite3.Row[cite: 1]
+    conn.execute("PRAGMA journal_mode=WAL")[cite: 1]
+    conn.execute("PRAGMA foreign_keys=ON")[cite: 1]
     return conn
 
-
 def _aplicar_sql(conn, guion):
-    """executescript() haria commit de la transaccion abierta, asi que se ejecuta
-    cada sentencia por separado."""
     for sentencia in guion.split(";"):
         if sentencia.strip():
             conn.execute(sentencia)
 
-
 def _aplicar_esquema(conn):
     _aplicar_sql(conn, ESQUEMA)
-
 
 def _columnas(conn, tabla):
     return {f["name"] for f in conn.execute(f"PRAGMA table_info({tabla})")}
 
-
 def _asegurar_columnas(conn):
-    """Anade las columnas que falten en bases creadas con esquemas antiguos."""
     for tabla, columnas in COLUMNAS_ESPERADAS.items():
         existentes = _columnas(conn, tabla)
         if not existentes:
@@ -172,10 +195,7 @@ def _asegurar_columnas(conn):
                 log.info("Anadiendo la columna %s.%s que faltaba", tabla, columna)
                 conn.execute(f"ALTER TABLE {tabla} ADD COLUMN {columna} {tipo}")
 
-
 def _rellenar_nulos(conn):
-    """Las columnas anadidas por ALTER TABLE quedan a NULL y el esquema nuevo las
-    declara NOT NULL, asi que se les da un valor antes de reconstruir las tablas."""
     ahora_utc = datetime.now(timezone.utc).isoformat()
     for tabla, columna, valor in (
         ("eventos", "created_at", ahora_utc),
@@ -190,9 +210,7 @@ def _rellenar_nulos(conn):
         if columna in _columnas(conn, tabla):
             conn.execute(f"UPDATE {tabla} SET {columna} = ? WHERE {columna} IS NULL", (valor,))
 
-
 def _a_utc_iso(texto):
-    """Normaliza una marca de tiempo almacenada a ISO-8601 en UTC."""
     if not texto:
         return texto
     try:
@@ -203,10 +221,7 @@ def _a_utc_iso(texto):
         dt = dt.replace(tzinfo=TIMEZONE)
     return dt.astimezone(timezone.utc).isoformat()
 
-
 def _migrar_a_utc(conn):
-    """Las fechas se guardaban con el offset local, lo que rompe las comparaciones
-    de texto al cambiar el horario de verano. Se reescriben en UTC."""
     for tabla, columnas in (
         ("eventos", ("start_time", "created_at")),
         ("inscripciones", ("created_at",)),
@@ -222,7 +237,6 @@ def _migrar_a_utc(conn):
                 nuevo = _a_utc_iso(fila["valor"])
                 if nuevo != fila["valor"]:
                     conn.execute(f"UPDATE {tabla} SET {columna} = ? WHERE id = ?", (nuevo, fila["id"]))
-
 
 def _eliminar_duplicados(conn):
     conn.execute("""
@@ -241,15 +255,12 @@ def _eliminar_duplicados(conn):
         )
     """)
 
-
 def _eliminar_huerfanos(conn):
     for tabla in TABLAS_HIJAS:
         conn.execute(f"DELETE FROM {tabla} WHERE event_id NOT IN (SELECT id FROM eventos)")
     conn.execute("DELETE FROM inscripciones WHERE option_id NOT IN (SELECT id FROM opciones_inscripcion)")
 
-
 def _reconstruir_con_claves_foraneas(conn):
-    """Las tablas antiguas se crearon sin REFERENCES; se recrean copiando los datos."""
     for tabla in TABLAS_HIJAS:
         ddl = conn.execute("SELECT sql FROM sqlite_master WHERE type='table' AND name = ?", (tabla,)).fetchone()
         if not ddl or "REFERENCES" in ddl["sql"].upper():
@@ -261,9 +272,9 @@ def _reconstruir_con_claves_foraneas(conn):
         conn.execute(f"INSERT INTO {tabla} ({columnas}) SELECT {columnas} FROM {tabla}_old")
         conn.execute(f"DROP TABLE {tabla}_old")
 
-
 def inicializar_db():
-    conn = conectar_db()
+    descargar_db_remota()  # <--- Descarga el archivo desde Supabase al arrancar
+    conn = conectar_db()[cite: 1]
     try:
         conn.execute("PRAGMA foreign_keys=OFF")
         conn.execute("BEGIN IMMEDIATE")
