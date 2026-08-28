@@ -365,11 +365,21 @@ async def cmd_marcar_asistencia(interaction: discord.Interaction, evento_id: int
     )
 
 @bot.event
+async def setup_hook():
+    # Carga tus módulos/cogs si los usas en archivos separados
+    # await bot.load_extension('status_checker') 
+    
+    # Sincroniza los comandos Slash con los servidores de Discord
+    try:
+        synced = await bot.tree.sync()
+        print(f"Sincronizados {len(synced)} comandos Slash correctamente.")
+    except Exception as e:
+        print(f"Error al sincronizar comandos: {e}")
+
+@bot.event
 async def on_ready():
-    bot.tree.clear_commands(guild=None)
-    await bot.tree.sync()
-    print("Comandos limpiados de la API de Discord.")
- 
+    print(f"Bot conectado exitosamente como: {bot.user.name}") 
+    
 keep_alive()
 
 if __name__ == "__main__":
