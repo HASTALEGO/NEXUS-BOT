@@ -23,8 +23,8 @@ def status():
     })
 
 def run():
-    port = int(os.getenv("PORT", 8080))
-    app.run(host='0.0.0.0', port=port, use_reloader=False)
+    port = int(os.getenv("PORT", 8000))
+    app.run(host='0.0.0.0', port=port)
 
 def keep_alive():
     """Arranca el servidor en segundo plano. Daemon para que no impida cerrar el bot."""
