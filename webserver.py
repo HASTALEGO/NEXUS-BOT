@@ -1,5 +1,5 @@
 import os
-from flask import Flask
+from flask import Flask, jsonify
 from threading import Thread
 
 app = Flask(__name__)
@@ -8,8 +8,11 @@ app = Flask(__name__)
 def home():
     return "NexusBot está activo."
 
+@app.route('/status')
+def status():
+    return jsonify({"status": "online", "message": "Servidor web operativo"}), 200
+
 def run():
-    # Render asigna dinámicamente el puerto en la variable PORT
     port = int(os.environ.get("PORT", 8080))
     app.run(host='0.0.0.0', port=port)
 

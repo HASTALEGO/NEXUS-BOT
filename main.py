@@ -5,45 +5,26 @@ import sys
 import threading
 from datetime import datetime, timedelta
 from pathlib import Path
-from threading import Thread
-from formatters import COLOR_BLANCO
-from webserver import run  # o keep_alive() según la función que arranca Flask
-
-# Inicia el servidor Flask en un hilo separado antes de correr el bot
-threading.Thread(target=run, daemon=True).start()
 
 import discord
 from discord import app_commands
 from discord.ext import commands, tasks
-from dotenv import dotenv_values, load_dotenv
-from flask import Flask
 
-# Integración del banner saturado estilizado
+# 1. Módulos locales y base de datos
 from creador_eventos import configurar_creador_eventos
 from database import conectar_db, inicializar_db
-from formatters import a_utc_iso, ahora, timestamp_discord
+from formatters import COLOR_BLANCO, a_utc_iso, ahora, timestamp_discord
 from modulo_calendario import configurar_modulo_calendario
 from modulo_valoraciones import registrar_comandos_valoraciones
 from modulos_eventos import eliminar_voz_temporal, generar_csv_evento, gestionar_voz_temporal
+from status_checker import obtener_estado_sistema
 from vistas_eventos import (
     EventoView, actualizar_evento_publicado, fin_evento, inicializar_vistas,
     inicio_evento, obtener_o_crear_hilo, publicar_evento, trocear_menciones,
 )
+from webserver import keep_alive
 
-app_web = Flask('')
-
-@app_web.route('/')
-def home():
-    return "NEXUS BOT está activo."
-
-def run_web():
-    port = int(os.environ.get("PORT", 8080))
-    app_web.run(host='0.0.0.0', port=port)
-
-def keep_alive():
-    t = Thread(target=run_web)
-    t.start()
-
+# 2. Logs y Entorno
 logging.basicConfig(
     level=os.getenv("LOG_LEVEL", "INFO"),
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
@@ -51,26 +32,19 @@ logging.basicConfig(
 log = logging.getLogger("bot_eventos")
 
 RUTA_ENV = Path(__file__).resolve().with_name(".env")
+from dotenv import dotenv_values, load_dotenv
 load_dotenv(RUTA_ENV)
 
 TOKEN = (os.getenv("DISCORD_TOKEN") or "").strip().strip("\"'")
 if not TOKEN:
-    if RUTA_ENV.exists():
-        claves = sorted(dotenv_values(RUTA_ENV))
-        log.error(
-            "El archivo %s no define DISCORD_TOKEN. Variables encontradas: %s",
-            RUTA_ENV, ", ".join(claves) or "(ninguna)",
-        )
-    else:
-        log.error("No existe %s. Crealo con la linea: DISCORD_TOKEN=tu_token", RUTA_ENV)
+    log.error("No se encontró DISCORD_TOKEN válido.")
     sys.exit(1)
 
 GUILD_ID = int((os.getenv("GUILD_ID") or "0").strip() or 0)
 GUILD_OBJECT = discord.Object(id=GUILD_ID) if GUILD_ID > 0 else None
-
 FRECUENCIAS_REPETIBLES = ("Diariamente", "Semanalmente", "Mensualmente")
 
-
+# 3. Auxiliares y Lógica de Recurrencia
 def calcular_siguiente_ocurrencia(fecha: datetime, frecuencia: str):
     if frecuencia == "Diariamente":
         return fecha + timedelta(days=1)
@@ -83,9 +57,7 @@ def calcular_siguiente_ocurrencia(fecha: datetime, frecuencia: str):
         return fecha.replace(year=y, month=m, day=min(fecha.day, calendar.monthrange(y, m)[1]))
     return None
 
-
 def clonar_evento(evento, nuevo_inicio: datetime) -> int:
-    """Duplica un evento recurrente (opciones, menciones, restricciones y recordatorios)."""
     conn = conectar_db()
     try:
         conn.execute("BEGIN IMMEDIATE")
@@ -102,23 +74,10 @@ def clonar_evento(evento, nuevo_inicio: datetime) -> int:
             a_utc_iso(ahora()),
         ))
         nuevo_id = cursor.lastrowid
-
-        conn.execute("""
-            INSERT INTO opciones_inscripcion (event_id, name, emoji, max_slots)
-            SELECT ?, name, emoji, max_slots FROM opciones_inscripcion WHERE event_id = ?
-        """, (nuevo_id, evento["id"]))
-        conn.execute("""
-            INSERT INTO evento_menciones (event_id, role_id)
-            SELECT ?, role_id FROM evento_menciones WHERE event_id = ?
-        """, (nuevo_id, evento["id"]))
-        conn.execute("""
-            INSERT INTO evento_restricciones (event_id, role_id, tipo)
-            SELECT ?, role_id, tipo FROM evento_restricciones WHERE event_id = ?
-        """, (nuevo_id, evento["id"]))
-        conn.execute("""
-            INSERT INTO recordatorios (event_id, minutes_before, sent)
-            SELECT ?, minutes_before, 0 FROM recordatorios WHERE event_id = ?
-        """, (nuevo_id, evento["id"]))
+        conn.execute("INSERT INTO opciones_inscripcion (event_id, name, emoji, max_slots) SELECT ?, name, emoji, max_slots FROM opciones_inscripcion WHERE event_id = ?", (nuevo_id, evento["id"]))
+        conn.execute("INSERT INTO evento_menciones (event_id, role_id) SELECT ?, role_id FROM evento_menciones WHERE event_id = ?", (nuevo_id, evento["id"]))
+        conn.execute("INSERT INTO evento_restricciones (event_id, role_id, tipo) SELECT ?, role_id, tipo FROM evento_restricciones WHERE event_id = ?", (nuevo_id, evento["id"]))
+        conn.execute("INSERT INTO recordatorios (event_id, minutes_before, sent) SELECT ?, minutes_before, 0 FROM recordatorios WHERE event_id = ?", (nuevo_id, evento["id"]))
         conn.execute("UPDATE eventos SET next_created = 1 WHERE id = ?", (evento["id"],))
         conn.commit()
     except Exception:
@@ -127,7 +86,6 @@ def clonar_evento(evento, nuevo_inicio: datetime) -> int:
     finally:
         conn.close()
     return nuevo_id
-
 
 async def enviar_recordatorios(conn, ahora_actual):
     pendientes = conn.execute("""
@@ -162,7 +120,6 @@ async def enviar_recordatorios(conn, ahora_actual):
             conn.execute("UPDATE recordatorios SET sent = 1 WHERE id = ?", (rec["reminder_id"],))
             conn.commit()
 
-
 async def gestionar_ciclo_de_vida(conn, ahora_actual):
     eventos = conn.execute("""
         SELECT * FROM eventos
@@ -186,9 +143,7 @@ async def gestionar_ciclo_de_vida(conn, ahora_actual):
         except Exception:
             log.exception("Fallo en el ciclo de vida del evento %s", evento["id"])
 
-
 async def cerrar_evento(evento, ahora_actual):
-    """Marca el anuncio como finalizado y, si es recurrente, publica la siguiente ocurrencia."""
     await actualizar_evento_publicado(evento["id"])
 
     if evento["frequency"] not in FRECUENCIAS_REPETIBLES:
@@ -210,7 +165,6 @@ async def cerrar_evento(evento, ahora_actual):
     guild = bot.get_guild(evento["guild_id"])
     canal = guild.get_channel(evento["channel_id"]) if guild else None
     if not canal:
-        log.warning("Evento recurrente %s clonado como %s pero sin canal donde publicarlo", evento["id"], nuevo_id)
         return
 
     conn = conectar_db()
@@ -221,9 +175,8 @@ async def cerrar_evento(evento, ahora_actual):
     menciones = " ".join(f"<@&{r['role_id']}>" for r in roles) or None
 
     await publicar_evento(nuevo_id, canal, menciones)
-    log.info("Evento recurrente %s replicado como %s", evento["id"], nuevo_id)
 
-
+# 4. Tareas en segundo plano
 @tasks.loop(seconds=30)
 async def tareas_eventos():
     ahora_actual = ahora()
@@ -234,33 +187,18 @@ async def tareas_eventos():
     finally:
         conn.close()
 
-
-@tareas_eventos.error
-async def error_tareas(error: Exception):
-    log.exception("El loop de tareas fallo, se reinicia", exc_info=error)
-    if not tareas_eventos.is_running():
-        tareas_eventos.restart()
-
-
 @tareas_eventos.before_loop
 async def antes_de_tareas():
     await bot.wait_until_ready()
 
-
+# 5. Configuración de la clase Bot
 class BotEventos(commands.Bot):
     async def setup_hook(self):
-        # 1. Imprimir banner ASCII masivo
-
-        print("DATABASE", "Inicializando base de datos SQLite...", "INFO")
+        log.info("Inicializando SQLite y vistas...")
         inicializar_db()
-
-        print("VIEWS", "Cargando vistas y persistencia de botones...", "INFO")
         inicializar_vistas(self)
 
-        print("STATUS", "Cargando extensión status_checker...", "INFO")
-       # await self.load_extension("status_checker")
-
-        print("MODULES", "Registrando eventos, calendario y valoraciones...", "INFO")
+        log.info("Cargando módulos de comandos...")
         configurar_creador_eventos(self)
         configurar_modulo_calendario(self)
         registrar_comandos_valoraciones(self)
@@ -270,29 +208,27 @@ class BotEventos(commands.Bot):
             eventos = conn.execute("SELECT id FROM eventos WHERE message_id IS NOT NULL").fetchall()
         finally:
             conn.close()
+
         for ev in eventos:
             self.add_view(EventoView(ev["id"]))
 
-        # Sincronización formateada
+        # Sincronización global/guild de comandos Slash
         if GUILD_OBJECT:
             self.tree.copy_global_to(guild=GUILD_OBJECT)
             comandos = await self.tree.sync(guild=GUILD_OBJECT)
-            print(len(comandos), f"GUILD: {GUILD_ID}")
+            log.info(f"Sincronizados {len(comandos)} comandos en Guild: {GUILD_ID}")
         else:
             comandos = await self.tree.sync()
-            print(len(comandos), "GLOBAL (TODOS LOS SERVIDORES)")
+            log.info(f"Sincronizados {len(comandos)} comandos de manera GLOBAL.")
 
-        print("TASKS", "Desplegando loop de tareas en segundo plano...", "SYNC")
         tareas_eventos.start()
-
 
 intents = discord.Intents.default()
 intents.members = True
 intents.message_content = True
 bot = BotEventos(command_prefix="!", intents=intents)
 
-from status_checker import obtener_estado_sistema
-
+# 6. Comandos Slash
 @bot.tree.command(name="status", description="Muestra el estado del sistema y métricas del servidor.")
 async def cmd_status(interaction: discord.Interaction):
     await interaction.response.defer(ephemeral=True)
@@ -336,51 +272,11 @@ async def cmd_exportar_evento(interaction: discord.Interaction, evento_id: int):
     archivo = generar_csv_evento(evento_id)
     await interaction.response.send_message(f"► Exportación de evento #{evento_id}:", file=archivo, ephemeral=True)
 
-
-@bot.tree.command(name="marcar_asistencia", description="Registra si un usuario asistio a un evento.")
-@app_commands.default_permissions(administrator=True)
-@app_commands.guild_only()
-async def cmd_marcar_asistencia(interaction: discord.Interaction, evento_id: int, usuario: discord.Member, asistio: bool):
-    conn = conectar_db()
-    try:
-        existe = conn.execute(
-            "SELECT 1 FROM eventos WHERE id = ? AND guild_id = ?", (evento_id, interaction.guild_id)
-        ).fetchone()
-        if not existe:
-            return await interaction.response.send_message("‼ Ese evento no existe en este servidor.", ephemeral=True)
-
-        conn.execute("""
-            INSERT INTO asistencia (event_id, user_id, attended, registered_at)
-            VALUES (?, ?, ?, ?)
-            ON CONFLICT(event_id, user_id) DO UPDATE SET
-                attended = excluded.attended, registered_at = excluded.registered_at
-        """, (evento_id, usuario.id, 1 if asistio else 0, a_utc_iso(ahora())))
-        conn.commit()
-    finally:
-        conn.close()
-
-    estado = "asistió" if asistio else "faltó"
-    await interaction.response.send_message(
-        f"► Registrado: {usuario.mention} {estado} al evento #{evento_id}.", ephemeral=True
-    )
-
-@bot.event
-async def setup_hook():
-    # Carga tus módulos/cogs si los usas en archivos separados
-    # await bot.load_extension('status_checker') 
-    
-    # Sincroniza los comandos Slash con los servidores de Discord
-    try:
-        synced = await bot.tree.sync()
-        print(f"Sincronizados {len(synced)} comandos Slash correctamente.")
-    except Exception as e:
-        print(f"Error al sincronizar comandos: {e}")
-
 @bot.event
 async def on_ready():
-    print(f"Bot conectado exitosamente como: {bot.user.name}") 
-    
-keep_alive()
+    log.info(f"Bot conectado exitosamente como: {bot.user.name}")
 
+# 7. Ejecución Principal
 if __name__ == "__main__":
+    keep_alive()  # Servidor Web en hilo Daemon (1 única ejecución)
     bot.run(TOKEN)
