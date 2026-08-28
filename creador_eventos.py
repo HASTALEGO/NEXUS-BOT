@@ -195,7 +195,7 @@ async def ejecutar_creador_lineal(bot: commands.Bot, interaction: discord.Intera
 
             datos["start_time"] = fecha
             break
-        
+
         # PASO 5: Duración
         while True:
             await enviar_paso("¿DURACIÓN ESTIMADA?", "► Ejemplos: 2h, 90m, 2h 30m", error_actual)
@@ -262,24 +262,35 @@ async def ejecutar_creador_lineal(bot: commands.Bot, interaction: discord.Intera
                 break
             error_actual = "Introduce 1 o 2."
 
-        # PASO 9B: Límite de personas (cupo máximo que acepta la misión)
+# PASO 9B: Límite de personas (cupo máximo que acepta la misión)
         while True:
             desc = "► Máximo de personas que pueden **ACEPTAR** la misión.\n► Escribe 'ninguno' para sin límite.\n\n§ Introduce un número:"
             await enviar_paso("¿CUÁL ES EL LÍMITE DE PERSONAS?", desc, error_actual)
             error_actual, resp = None, await esperar_respuesta()
+            
             if resp in ("TIMEOUT", "CANCEL"): 
                 return await enviar_paso("CREACIÓN CANCELADA", "‼ Cancelado.", mostrar_cancelar=False)
-            if resp.strip().lower() in ("ninguno", "no", "none", "infinito", "∞", "0"):
-                datos["signup_options"][0]["max_slots"] = None
-                datos["max_personas"] = 0
-                break
-            if resp.strip().isdigit() and int(resp.strip()) > 0:
-                cupo = int(resp.strip())
-                datos["signup_options"][0]["max_slots"] = cupo
-                datos["max_personas"] = cupo
-                break
-            error_actual = "Introduce un número mayor que 0 o 'ninguno'."
+            
+            val = resp.strip().lower()
 
+            if val in ("ninguno", "no", "none", "infinito", "∞", "0"):
+                cupo = None
+                datos["max_personas"] = 0
+            elif val.isdigit() and int(val) > 0:
+                cupo = int(val)
+                datos["max_personas"] = cupo
+            else:
+                error_actual = "Introduce un número mayor que 0 o 'ninguno'."
+                continue
+
+            # Asignación segura en signup_options evitando IndexError
+            if not datos.get("signup_options"):
+                datos["signup_options"] = [{"name": "Asistir", "max_slots": cupo}]
+            else:
+                datos["signup_options"][0]["max_slots"] = cupo
+
+            break
+        
         # PASO 10: Menciones
         conn = conectar_db()
         filas_m = conn.execute("SELECT role_id FROM roles_mencionables WHERE guild_id = ?", (guild.id,)).fetchall()
