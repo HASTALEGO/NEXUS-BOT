@@ -28,8 +28,8 @@ def descargar_db_remota():
             f.write(data)
         log.info("Base de datos restaurada desde la nube con éxito.")
     except Exception as e:
-        log.warning("No se pudo descargar la DB remota (¿primer inicio?): %s", e)
-
+        log.info("No se encontró respaldo remoto previo (inicio limpio o primer despliegue).")
+        
 def guardar_db_remota():
     """Suba el archivo eventos.db a la nube."""
     if not SUPABASE_URL or not SUPABASE_KEY or not os.path.exists(DATABASE):
