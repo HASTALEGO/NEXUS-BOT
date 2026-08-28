@@ -1,5 +1,6 @@
 import os
-from datetime import datetime, timezone
+import re
+from datetime import datetime, timezone, timedelta
 from zoneinfo import ZoneInfo
 
 TIMEZONE = ZoneInfo(os.getenv("TIMEZONE", "Europe/Madrid"))
@@ -70,6 +71,129 @@ def parsear_fecha(contenido: str):
         return dt.replace(tzinfo=TIMEZONE)
     except ValueError:
         return None
+
+def canal_predeterminado_id() -> int:
+    """ID del canal por defecto para publicar eventos (variable CANAL_EVENTOS_ID del .env)."""
+    raw = (os.getenv("CANAL_EVENTOS_ID") or "").strip()
+    try:
+        return int(raw)
+    except (TypeError, ValueError):
+        return 0
+
+DIA_SEMANA = {
+    "lunes": 0, "martes": 1, "miercoles": 2, "miércoles": 2,
+    "jueves": 3, "viernes": 4, "sabado": 5, "sábado": 5, "domingo": 6,
+    "lun": 0, "mar": 1, "mie": 2, "mié": 2, "jue": 3, "vie": 4, "sab": 5, "sáb": 5, "dom": 6,
+}
+
+def _zona_aviable(tz):
+    if isinstance(tz, str):
+        try:
+            return ZoneInfo(tz)
+        except Exception:
+            return TIMEZONE
+    return tz if isinstance(tz, ZoneInfo) else TIMEZONE
+
+def _hora_natural(texto: str):
+    """Extrae hora:minuto de un texto. Admite 24h ('17:30'/'17h') y 12h ('4:00 pm')."""
+    m = re.search(r"(\d{1,2})(?::(\d{2}))?\s*(a\.?\s*m\.?|p\.?\s*m\.?|am|pm)?", texto.lower())
+    if not m:
+        return None
+    h = int(m.group(1))
+    mi = int(m.group(2) or 0)
+    ampm = (m.group(3) or "")
+    if "p" in ampm and h < 12:
+        h += 12
+    elif "a" in ampm and h == 12:
+        h = 0
+    return h, mi
+
+def interpretar_fecha(contenido: str, tz=None):
+    """Interpreta fechas/horas en español usando la zona horaria del usuario (tz).
+
+    Formas aceptadas:
+      - 'en 30 min', 'en 1 hora', 'en 927 minutos', 'en 2 dias'
+      - 'hoy a las 21:00', 'mañana a las 4:00 PM', 'mañana 17:30'
+      - 'viernes a las 17:00', 'viernes 5:00 pm', 'sábado 12:30'
+      - '17:30' (solo hora: hoy; si ya pasó, mañana)
+      - '20/08/2026 12:30' o '20/08/2026' (a las 20:00)
+    Devuelve datetime en tz (o TIMEZONE si tz no es válido/omitido) o None si no entiende.
+    """
+    zona = _zona_aviable(tz)
+    ahora_dt = datetime.now(zona)
+    s = " ".join(contenido.lower().split())
+
+    # 1) Relativos: "en X minutos / horas / minutos / días" y abreviaturas (1h, 20m, 2d)
+    m = re.search(
+        r"\ben\s+(\d+(?:[.,]\d+)?)\s*(horas?|minutos?|dias?|días?|min|h|m|d)\b",
+        s,
+    )
+    if m:
+        cant = float(m.group(1).replace(",", "."))
+        uni = m.group(2).lower()
+        if uni in ("horas", "hora", "h"):
+            delta = timedelta(hours=cant)
+        elif uni in ("dias", "día", "días", "dia", "d"):
+            delta = timedelta(days=cant)
+        else:
+            delta = timedelta(minutes=cant)
+        return ahora_dt + delta
+
+    def con_hora(fecha_base, defensa_hora):
+        h = _hora_natural(s)
+        if h is None:
+            if re.search(r"\bmediod", s.replace("í", "i")) or "mediodia" in s or "mediodía" in s:
+                return fecha_base.replace(hour=12, minute=0, second=0, microsecond=0)
+            if re.search(r"\bmedianoche\b", s):
+                return fecha_base.replace(hour=0, minute=0, second=0, microsecond=0)
+            return fecha_base.replace(hour=defensa_hora[0], minute=defensa_hora[1], second=0, microsecond=0)
+        return fecha_base.replace(hour=h[0], minute=h[1], second=0, microsecond=0)
+
+    # 2) Palabras clave: hoy / mañana
+    if re.search(r"\bhoy\b", s):
+        dt = con_hora(ahora_dt, (ahora_dt.hour, ahora_dt.minute))
+        if dt <= ahora_dt:
+            dt += timedelta(days=1)
+        return dt
+    if re.search(r"\bmañana\b", s) or re.search(r"\bmanana\b", s):
+        base = ahora_dt + timedelta(days=1)
+        return con_hora(base, (ahora_dt.hour, ahora_dt.minute))
+
+    # 3) Día de la semana
+    for nombre, dia in DIA_SEMANA.items():
+        if re.search(rf"\b{re.escape(nombre)}\b", s):
+            diferencia = (dia - ahora_dt.weekday()) % 7
+            dt = con_hora(ahora_dt + timedelta(days=diferencia), (20, 0))
+            if dt <= ahora_dt:
+                dt += timedelta(days=7)
+            return dt
+
+    # 4) Fecha estricta DD/MM/YYYY [HH:MM] (se comprueba antes que la hora suelta)
+    m = re.match(
+        r"(\d{1,2})/(\d{1,2})/(\d{4})(?:\s+(?:a\s+las\s+)?(\d{1,2}):(\d{2})\s*(?:a\.?\s*m\.?|p\.?\s*m\.?|am|pm)?)?$",
+        s,
+    )
+    if m:
+        try:
+            d, mo, y = int(m.group(1)), int(m.group(2)), int(m.group(3))
+            if m.group(4) is None:
+                h_h, h_m = 20, 0
+            else:
+                h_h, h_m = int(m.group(4)), int(m.group(5))
+            return datetime(y, mo, d, h_h, h_m, tzinfo=zona)
+        except ValueError:
+            return None
+
+    # 5) Solo hora: "17:30", "4:00 pm" → hoy, o mañana si ya pasó
+    if re.search(r"\d{1,2}:\d{2}", s) or re.search(r"\d{1,2}\s*(?:am|pm)\b", s):
+        h = _hora_natural(s)
+        if h:
+            dt = ahora_dt.replace(hour=h[0], minute=h[1], second=0, microsecond=0)
+            if dt <= ahora_dt:
+                dt += timedelta(days=1)
+            return dt
+
+    return None
 
 def timestamp_discord(fecha):
     if isinstance(fecha, str):

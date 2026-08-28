@@ -12,12 +12,26 @@ from database import (
     obtener_detalles_feedback_evento,
     obtener_perfil_usuario,
     obtener_resumen_valoraciones_creador,
+    obtener_zona_horaria,
     remover_rol_valoracion,
     setear_preferencia_feedback,
+    setear_zona_horaria,
 )
 from formatters import COLOR_BLANCO, format_perfil_asistencia, generar_estrellas_ascii
 
 log = logging.getLogger(__name__)
+
+ZONAS_HORARIAS = [
+    "Europe/Madrid", "Europe/London", "Atlantic/Canary",
+    "America/Caracas", "America/Bogota", "America/Mexico_City",
+    "America/Argentina/Buenos_Aires", "America/Lima", "America/Santiago",
+    "America/Sao_Paulo", "America/Panama", "America/New_York",
+    "America/Chicago", "America/Denver", "America/Los_Angeles",
+    "America/Havana", "America/Honduras", "America/Guatemala",
+    "America/El_Salvador", "America/Costa_Rica", "America/La_Paz",
+    "America/Guayaquil", "America/Asuncion", "America/Montevideo",
+    "America/Managua",
+]
 
 
 def configurar_modulo_perfil(bot: commands.Bot):
@@ -108,6 +122,31 @@ def configurar_modulo_perfil(bot: commands.Bot):
         await interaction.response.send_message(
             f"► DMs de valoraciones **{estado}** para <@{interaction.user.id}>.", ephemeral=True
         )
+
+    @bot.tree.command(
+        name="zona_horaria",
+        description="Muestra o cambia tu zona horaria (para interpretar las fechas de los eventos).",
+    )
+    @app_commands.describe(zona="Zona horaria (opcional: déjalo vacío para ver la actual)")
+    @app_commands.choices(zona=[app_commands.Choice(name=z, value=z) for z in ZONAS_HORARIAS])
+    async def cmd_zona_horaria(interaction: discord.Interaction, zona: str = None):
+        if zona:
+            if setear_zona_horaria(interaction.user.id, zona):
+                await interaction.response.send_message(
+                    f"► Tu zona horaria ahora es **{zona}**. Las fechas que escribas se interpretarán en esa zona.",
+                    ephemeral=True,
+                )
+            else:
+                await interaction.response.send_message(
+                    "‼ Zona horaria inválida. Usa un nombre IANA (p.ej. America/Caracas).", ephemeral=True
+                )
+        else:
+            actual = obtener_zona_horaria(interaction.user.id)
+            await interaction.response.send_message(
+                f"► Tu zona horaria actual es **{actual}**.\n"
+                f"► Úsala con un valor para cambiarla, p.ej. `/zona_horaria zona:America/Caracas`.",
+                ephemeral=True,
+            )
 
     @bot.tree.command(
         name="autorrol_valoracion",

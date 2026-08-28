@@ -13,12 +13,14 @@ from database import (
     actualizar_opcion,
     conectar_db,
     obtener_eventos_creador,
+    obtener_zona_horaria,
 )
 from formatters import (
     COLOR_BLANCO,
     a_utc_iso,
     ahora,
-    parsear_fecha,
+    canal_predeterminado_id,
+    interpretar_fecha,
     timestamp_discord,
 )
 from vistas_eventos import actualizar_evento_publicado, obtener_o_crear_hilo, publicar_evento
@@ -98,11 +100,20 @@ async def _seleccionar_canal(flujo: _Asistente):
                if c.permissions_for(flujo.guild.me).send_messages]
     if not canales:
         return None
+
+    canal_defecto = None
+    if (cid := canal_predeterminado_id()) and (c := flujo.guild.get_channel(cid)):
+        if isinstance(c, discord.TextChannel) and c.permissions_for(flujo.guild.me).send_messages:
+            canal_defecto = c
+
     total_paginas = max(1, (len(canales) + POR_PAGINA - 1) // POR_PAGINA)
     pagina = 0
     while True:
         bloque = canales[pagina * POR_PAGINA:(pagina + 1) * POR_PAGINA]
-        lineas = [f"► [{i}] {c.mention}" for i, c in enumerate(bloque, start=1)]
+        lineas = []
+        if canal_defecto:
+            lineas.append(f"► [0] CANAL PREDETERMINADO → {canal_defecto.mention}")
+        lineas += [f"► [{i}] {c.mention}" for i, c in enumerate(bloque, start=1)]
         desc = "Canal de publicación:\n\n" + "\n".join(lineas)
         desc += f"\n\n─── Página {pagina + 1} de {total_paginas} ───"
         if pagina < total_paginas - 1:
@@ -120,6 +131,8 @@ async def _seleccionar_canal(flujo: _Asistente):
             pagina += 1
         elif r_up == "A" and pagina > 0:
             pagina -= 1
+        elif resp == "0" and canal_defecto:
+            return canal_defecto
         elif resp.isdigit() and 1 <= int(resp) <= len(bloque):
             return bloque[int(resp) - 1]
 
@@ -237,15 +250,21 @@ async def iniciar_edicion_evento(bot: commands.Bot, event_id: int, interaction: 
                         actualizar_campos_evento(event_id, description=desc)
                         cambio = True
             elif resp == "3":
-                await flujo.enviar("NUEVA FECHA DE INICIO", "► Formato: DD/MM/YYYY HH:MM\n§ Ejemplo: 30/09/2026 20:30")
+                await flujo.enviar(
+                    "NUEVA FECHA DE INICIO",
+                    f"► Escribe la nueva fecha en lenguaje natural:\n"
+                    f"► 'en 1 hora' · 'mañana a las 18:00' · 'viernes a las 17:00'\n"
+                    f"► 'viernes 5:00 pm' · '17:30' · '20/09/2026 12:30'\n"
+                    f"§ Se interpreta en tu zona horaria ({obtener_zona_horaria(usuario.id)}).",
+                )
                 r = await flujo.esperar()
                 if r not in ("CANCEL", "TIMEOUT"):
-                    fecha = parsear_fecha(r)
+                    fecha = interpretar_fecha(r, obtener_zona_horaria(usuario.id))
                     if fecha and fecha > ahora():
                         actualizar_campos_evento(event_id, start_time=a_utc_iso(fecha))
                         cambio = True
                     else:
-                        await flujo.enviar("ERROR", "‼ Formato incorrecto o fecha en el pasado.")
+                        await flujo.enviar("ERROR", "‼ No he entendido la fecha o está en el pasado.")
             elif resp == "4":
                 await flujo.enviar("NUEVA DURACIÓN", "► Ejemplos: 2h, 90m, 2h 30m")
                 r = await flujo.esperar()
@@ -406,19 +425,22 @@ async def iniciar_repetir_evento(bot: commands.Bot, interaction: discord.Interac
             return await flujo.enviar("ERROR", "‼ El evento original ya no existe.", False)
         elegido = completo
 
-        # Nueva fecha y hora (obligatorio)
+        # Nueva fecha y hora (obligatorio, en la zona horaria del usuario)
         while True:
             await flujo.enviar(
                 "NUEVA FECHA DE LA EDICIÓN",
-                "► Formato: DD/MM/YYYY HH:MM\n§ Ejemplo: 30/09/2026 20:30",
+                f"► Escribe la fecha en lenguaje natural:\n"
+                f"► 'en 1 hora' · 'mañana a las 18:00' · 'viernes a las 17:00'\n"
+                f"► 'viernes 5:00 pm' · '17:30' · '20/09/2026 12:30'\n"
+                f"§ Se interpreta en tu zona horaria ({obtener_zona_horaria(usuario.id)}).",
             )
             r = await flujo.esperar()
             if r in ("CANCEL", "TIMEOUT"):
                 return await flujo.enviar("CANCELADO", "‼ Reutilización cancelada.", False)
-            fecha = parsear_fecha(r)
+            fecha = interpretar_fecha(r, obtener_zona_horaria(usuario.id))
             if fecha and fecha > ahora():
                 break
-            await flujo.enviar("ERROR", "‼ Fecha inválida. Usa DD/MM/YYYY HH:MM y debe ser futura.")
+            await flujo.enviar("ERROR", "‼ No he entendido la fecha o está en el pasado.")
 
         # Canal de publicación (opcional: Enter mantiene el mismo)
         await flujo.enviar(

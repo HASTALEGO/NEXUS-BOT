@@ -2,13 +2,14 @@ import logging
 import os
 import sqlite3
 from datetime import datetime, timezone
+from zoneinfo import ZoneInfo
 from supabase import create_client
 from formatters import TIMEZONE
 
 log = logging.getLogger(__name__)
 
 DATABASE = os.getenv("DATABASE_PATH", "eventos.db")
-ESQUEMA_VERSION = 3  # v3: autorrol+preferencias de feedback y dm_reminders por evento
+ESQUEMA_VERSION = 4  # v4: zonas horarias por usuario (fechas interpretadas en la zona de cada uno)
 
 # Configuración y limpieza de URL de Supabase
 RAW_SUPABASE_URL = os.getenv("SUPABASE_URL", "")
@@ -155,6 +156,10 @@ CREATE TABLE IF NOT EXISTS roles_valoracion (role_id INTEGER PRIMARY KEY);
 CREATE TABLE IF NOT EXISTS preferencias_usuario (
     user_id INTEGER PRIMARY KEY,
     recibir_feedback INTEGER NOT NULL DEFAULT 1
+);
+CREATE TABLE IF NOT EXISTS zonas_horarias (
+    user_id INTEGER PRIMARY KEY,
+    timezone TEXT NOT NULL DEFAULT 'Europe/Madrid'
 );
 """
 
@@ -481,6 +486,44 @@ def remover_rol_valoracion(role_id: int):
     try:
         conn.execute("DELETE FROM roles_valoracion WHERE role_id = ?", (role_id,))
         conn.commit()
+    finally:
+        conn.close()
+
+def zona_horaria_defecto() -> str:
+    return TIMEZONE.key
+
+def obtener_zona_horaria(user_id: int) -> str:
+    """Zona horaria del usuario (IATA name, p.ej. 'America/Caracas'); si no tiene, la del bot."""
+    conn = conectar_db()
+    try:
+        fila = conn.execute(
+            "SELECT timezone FROM zonas_horarias WHERE user_id = ?", (user_id,)
+        ).fetchone()
+        if fila and fila["timezone"]:
+            try:
+                ZoneInfo(fila["timezone"])
+                return fila["timezone"]
+            except Exception:
+                pass
+        return zona_horaria_defecto()
+    finally:
+        conn.close()
+
+def setear_zona_horaria(user_id: int, timezone_nombre: str) -> bool:
+    """Guarda la zona horaria del usuario. Devuelve True solo si el nombre es válido."""
+    try:
+        zona = ZoneInfo(timezone_nombre.strip())
+    except Exception:
+        return False
+    conn = conectar_db()
+    try:
+        conn.execute("""
+            INSERT INTO zonas_horarias (user_id, timezone)
+            VALUES (?, ?)
+            ON CONFLICT(user_id) DO UPDATE SET timezone = excluded.timezone
+        """, (user_id, zona.key))
+        conn.commit()
+        return True
     finally:
         conn.close()
 

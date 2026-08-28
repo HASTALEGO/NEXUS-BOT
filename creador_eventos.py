@@ -6,10 +6,10 @@ from typing import List, Optional, Any
 import discord
 from discord.ext import commands
 
-from database import conectar_db
+from database import conectar_db, obtener_zona_horaria
 from formatters import (
-    COLOR_BLANCO, a_utc_iso, ahora, formatear_duracion, formatear_recordatorios,
-    parsear_fecha, timestamp_discord,
+    COLOR_BLANCO, a_utc_iso, ahora, canal_predeterminado_id, formatear_duracion,
+    formatear_recordatorios, interpretar_fecha, timestamp_discord,
 )
 from vistas_eventos import publicar_evento
 
@@ -87,11 +87,19 @@ async def ejecutar_creador_lineal(bot: commands.Bot, interaction: discord.Intera
         if not canales: 
             return await enviar_paso("SIN CANALES", "‼ No hay canales disponibles donde el bot tenga permisos de envío.", mostrar_cancelar=False)
 
+        canal_defecto = None
+        if (cid := canal_predeterminado_id()) and (c := guild.get_channel(cid)):
+            if isinstance(c, discord.TextChannel) and c.permissions_for(guild.me).send_messages:
+                canal_defecto = c
+
         pagina, por_pagina = 0, 15
         total_paginas = max(1, (len(canales) + por_pagina - 1) // por_pagina)
         while True:
             canales_pag = canales[pagina * por_pagina : (pagina + 1) * por_pagina]
-            lineas = [f"► [{i + 1}] {c.mention}" for i, c in enumerate(canales_pag)]
+            lineas = []
+            if canal_defecto:
+                lineas.append(f"► [0] CANAL PREDETERMINADO → {canal_defecto.mention}")
+            lineas += [f"► [{i + 1}] {c.mention}" for i, c in enumerate(canales_pag)]
             desc = "Selecciona el canal de publicación:\n\n" + "\n".join(lineas) + f"\n\n─── Página {pagina + 1} de {total_paginas} ───"
             if pagina < total_paginas - 1: desc += "\n► [S] Siguiente"
             if pagina > 0: desc += "\n◄ [A] Anterior"
@@ -105,6 +113,9 @@ async def ejecutar_creador_lineal(bot: commands.Bot, interaction: discord.Intera
             r_up = resp.upper()
             if r_up == "S" and pagina < total_paginas - 1: pagina += 1
             elif r_up == "A" and pagina > 0: pagina -= 1
+            elif resp == "0" and canal_defecto:
+                datos["publish_channel"] = canal_defecto
+                break
             elif resp.isdigit() and 1 <= int(resp) <= len(canales_pag):
                 datos["publish_channel"] = canales_pag[int(resp) - 1]
                 break
@@ -136,15 +147,26 @@ async def ejecutar_creador_lineal(bot: commands.Bot, interaction: discord.Intera
                 break
             error_actual = "Descripción demasiado larga (máximo 2000 caracteres)."
 
-        # PASO 4: Fecha y Hora
+        # PASO 4: Fecha y Hora (lenguaje natural, en la zona horaria del usuario)
+        zona_usuario = obtener_zona_horaria(usuario.id)
         while True:
-            await enviar_paso("¿FECHA Y HORA DE INICIO?", "► Formato: DD/MM/YYYY HH:MM\n§ Ejemplo: 30/08/2026 20:30", error_actual)
+            await enviar_paso(
+                "¿FECHA Y HORA DE INICIO?",
+                f"► Responda en lenguaje natural:\n"
+                f"► 'en 30 min' · 'en 1 hora' · 'en 927 minutos'\n"
+                f"► 'mañana a las 4:00 PM' · 'mañana 17:30'\n"
+                f"► 'viernes a las 17:00' · 'viernes 5:00 pm'\n"
+                f"► '17:30' (hoy; si ya pasó, mañana)\n"
+                f"► '20/08/2026 12:30' (o solo la fecha → a las 20:00)\n"
+                f"§ Se interpreta en TU zona horaria ({zona_usuario}). Usa /zona_horaria para cambiarla.",
+                error_actual,
+            )
             error_actual, resp = None, await esperar_respuesta()
             if resp in ("TIMEOUT", "CANCEL"): 
                 return await enviar_paso("CREACIÓN CANCELADA", "‼ Cancelado.", mostrar_cancelar=False)
-            fecha = parsear_fecha(resp)
-            if not fecha: 
-                error_actual = "Formato incorrecto. Usa DD/MM/YYYY HH:MM"
+            fecha = interpretar_fecha(resp, zona_usuario)
+            if not fecha:
+                error_actual = "No he entendido la fecha. Prueba: 'en 1 hora', 'mañana a las 18:00', 'viernes a las 17:00' o 'DD/MM/YYYY HH:MM'."
                 continue
             if fecha <= ahora(): 
                 error_actual = "La fecha debe ser en el futuro."
