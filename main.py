@@ -1,3 +1,5 @@
+# try
+
 import calendar
 import logging
 import os
@@ -5,6 +7,12 @@ import sys
 from datetime import datetime, timedelta
 from pathlib import Path
 from threading import Thread
+
+import threading
+from webserver import run  # o keep_alive() según la función que arranca Flask
+
+# Inicia el servidor Flask en un hilo separado antes de correr el bot
+threading.Thread(target=run, daemon=True).start()
 
 import discord
 from discord import app_commands
