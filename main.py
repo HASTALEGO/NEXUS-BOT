@@ -1,5 +1,3 @@
-# try
-
 import calendar
 import logging
 import os
