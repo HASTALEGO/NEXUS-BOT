@@ -96,11 +96,12 @@ LOCALES_A_ZONA = {
 
 LOCALES_A_ZONA_NORM = {k.lower(): v for k, v in LOCALES_A_ZONA.items()}
 
-def zona_desde_locale(locale_str: str):
+def zona_desde_locale(locale_str):
     """Deduce la zona horaria a partir del idioma/región del usuario en Discord."""
     if not locale_str:
         return None
-    clave = locale_str.strip().lower()
+    # Convertimos a string por si Discord pasa un Enum (discord.Locale)
+    clave = str(locale_str.value if hasattr(locale_str, 'value') else locale_str).strip().lower()
     if clave in LOCALES_A_ZONA_NORM:
         return LOCALES_A_ZONA_NORM[clave]
     # fallback por idioma genérico: es-XX → Europe/Madrid

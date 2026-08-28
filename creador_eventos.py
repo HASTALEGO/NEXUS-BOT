@@ -147,37 +147,55 @@ async def ejecutar_creador_lineal(bot: commands.Bot, interaction: discord.Intera
             datos["description"] = texto
             break
 
-        # PASO 4: Fecha y Hora (lenguaje natural, en la zona horaria del usuario)
-        zona_usuario = (
-            zona_horaria_guardada(usuario.id)
-            or zona_desde_locale(interaction.locale)
-            or zona_horaria_defecto()
-        )
-        while True:
-            await enviar_paso(
-                "¿FECHA Y HORA DE INICIO?",
-                f"► Responda en lenguaje natural:\n"
-                f"► 'en 30 min' · 'en 1 hora' · 'en 927 minutos'\n"
-                f"► 'mañana a las 4:00 PM' · 'mañana 17:30'\n"
-                f"► 'viernes a las 17:00' · 'viernes 5:00 pm'\n"
-                f"► '17:30' (hoy; si ya pasó, mañana)\n"
-                f"► '20/08/2026 12:30' (o solo la fecha → a las 20:00)\n"
-                f"§ Tu zona horaria (detectada): **{zona_usuario}**. Usa /zona_horaria si quieres corregirla.",
-                error_actual,
+# PASO 4: Fecha y Hora (lenguaje natural, en la zona horaria del usuario)
+        try:
+            zona_usuario = (
+                zona_horaria_guardada(usuario.id)
+                or zona_desde_locale(interaction.locale)
+                or zona_horaria_defecto()
             )
+        except Exception as e:
+            print(f"[ERROR ZONA HORARIA]: {e}")
+            zona_usuario = zona_horaria_defecto()
+
+        while True:
+            try:
+                await enviar_paso(
+                    "¿FECHA Y HORA DE INICIO?",
+                    f"► Responda en lenguaje natural:\n"
+                    f"► 'en 30 min' · 'en 1 hora' · 'en 927 minutos'\n"
+                    f"► 'mañana a las 4:00 PM' · 'mañana 17:30'\n"
+                    f"► 'viernes a las 17:00' · 'viernes 5:00 pm'\n"
+                    f"► '17:30' (hoy; si ya pasó, mañana)\n"
+                    f"► '20/08/2026 12:30' (o solo la fecha → a las 20:00)\n"
+                    f"§ Tu zona horaria (detectada): **{zona_usuario}**. Usa /zona_horaria si quieres corregirla.",
+                    error_actual,
+                )
+            except Exception as e:
+                print(f"[ERROR AL ENVIAR PASO FECHA]: {e}")
+
             error_actual, resp = None, await esperar_respuesta()
+
             if resp in ("TIMEOUT", "CANCEL"): 
                 return await enviar_paso("CREACIÓN CANCELADA", "‼ Cancelado.", mostrar_cancelar=False)
-            fecha = interpretar_fecha(resp, zona_usuario)
+
+            try:
+                fecha = interpretar_fecha(resp, zona_usuario)
+            except Exception as e:
+                print(f"[ERROR EN INTERPRETAR_FECHA]: {e}")
+                fecha = None
+
             if not fecha:
                 error_actual = "No he entendido la fecha. Prueba: 'en 1 hora', 'mañana a las 18:00', 'viernes a las 17:00' o 'DD/MM/YYYY HH:MM'."
                 continue
+
             if fecha <= ahora(): 
                 error_actual = "La fecha debe ser en el futuro."
                 continue
+
             datos["start_time"] = fecha
             break
-
+        
         # PASO 5: Duración
         while True:
             await enviar_paso("¿DURACIÓN ESTIMADA?", "► Ejemplos: 2h, 90m, 2h 30m", error_actual)
@@ -552,7 +570,7 @@ async def ejecutar_creador_lineal(bot: commands.Bot, interaction: discord.Intera
             conn.commit()
         finally:
             conn.close()
-            
+
         # Publicar evento visualmente en el canal
         menciones_str = " ".join(r.mention for r in datos["mention_roles"]) or None
         _, hilo = await publicar_evento(evento_id, canal, menciones_str)
