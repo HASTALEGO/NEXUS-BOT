@@ -2,11 +2,11 @@ import calendar
 import logging
 import os
 import sys
+import threading
 from datetime import datetime, timedelta
 from pathlib import Path
 from threading import Thread
-
-import threading
+from formatters import COLOR_BLANCO
 from webserver import run  # o keep_alive() según la función que arranca Flask
 
 # Inicia el servidor Flask en un hilo separado antes de correr el bot
@@ -19,7 +19,6 @@ from dotenv import dotenv_values, load_dotenv
 from flask import Flask
 
 # Integración del banner saturado estilizado
-from banner import log_evento, mostrar_banner, mostrar_resumen_comandos
 from creador_eventos import configurar_creador_eventos
 from database import conectar_db, inicializar_db
 from formatters import a_utc_iso, ahora, timestamp_discord
@@ -251,18 +250,17 @@ async def antes_de_tareas():
 class BotEventos(commands.Bot):
     async def setup_hook(self):
         # 1. Imprimir banner ASCII masivo
-        mostrar_banner()
 
-        log_evento("DATABASE", "Inicializando base de datos SQLite...", "INFO")
+        print("DATABASE", "Inicializando base de datos SQLite...", "INFO")
         inicializar_db()
 
-        log_evento("VIEWS", "Cargando vistas y persistencia de botones...", "INFO")
+        print("VIEWS", "Cargando vistas y persistencia de botones...", "INFO")
         inicializar_vistas(self)
 
-        log_evento("STATUS", "Cargando extensión status_checker...", "INFO")
+        print("STATUS", "Cargando extensión status_checker...", "INFO")
        # await self.load_extension("status_checker")
 
-        log_evento("MODULES", "Registrando eventos, calendario y valoraciones...", "INFO")
+        print("MODULES", "Registrando eventos, calendario y valoraciones...", "INFO")
         configurar_creador_eventos(self)
         configurar_modulo_calendario(self)
         registrar_comandos_valoraciones(self)
@@ -279,12 +277,12 @@ class BotEventos(commands.Bot):
         if GUILD_OBJECT:
             self.tree.copy_global_to(guild=GUILD_OBJECT)
             comandos = await self.tree.sync(guild=GUILD_OBJECT)
-            mostrar_resumen_comandos(len(comandos), f"GUILD: {GUILD_ID}")
+            print(len(comandos), f"GUILD: {GUILD_ID}")
         else:
             comandos = await self.tree.sync()
-            mostrar_resumen_comandos(len(comandos), "GLOBAL (TODOS LOS SERVIDORES)")
+            print(len(comandos), "GLOBAL (TODOS LOS SERVIDORES)")
 
-        log_evento("TASKS", "Desplegando loop de tareas en segundo plano...", "SYNC")
+        print("TASKS", "Desplegando loop de tareas en segundo plano...", "SYNC")
         tareas_eventos.start()
 
 
@@ -369,7 +367,7 @@ async def cmd_marcar_asistencia(interaction: discord.Interaction, evento_id: int
 
 @bot.event
 async def on_ready():
-    log_evento("CORE_ONLINE", f"NEXUS BOT OPERATIVO COMO: {bot.user}", "OK")
+    print("CORE_ONLINE", f"NEXUS BOT OPERATIVO COMO: {bot.user}", "OK")
 
 keep_alive()
 
