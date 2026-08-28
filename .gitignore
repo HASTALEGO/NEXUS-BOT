@@ -10,3 +10,4 @@ credenciales.json
 *.json
 .env
 *.db
+credenciales.json
