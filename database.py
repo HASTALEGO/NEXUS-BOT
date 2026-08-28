@@ -10,8 +10,9 @@ log = logging.getLogger(__name__)
 DATABASE = os.getenv("DATABASE_PATH", "eventos.db")
 ESQUEMA_VERSION = 1
 
-# Configuración de respaldo en la nube
-SUPABASE_URL = os.getenv("SUPABASE_URL")
+# Configuración y limpieza de URL de Supabase
+RAW_SUPABASE_URL = os.getenv("SUPABASE_URL", "")
+SUPABASE_URL = RAW_SUPABASE_URL.replace("/rest/v1", "").rstrip("/") if RAW_SUPABASE_URL else None
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 BUCKET_NAME = "bot-backups"
 
@@ -28,7 +29,7 @@ def descargar_db_remota():
             f.write(data)
         log.info("Base de datos restaurada desde la nube con éxito.")
     except Exception as e:
-        log.info("No se encontró respaldo remoto previo (inicio limpio o primer despliegue).")
+        log.info("No se encontró respaldo remoto previo (inicio limpio o primer despliegue): %s", str(e))
 
 def guardar_db_remota():
     """Suba el archivo eventos.db a la nube."""
@@ -45,7 +46,7 @@ def guardar_db_remota():
             )
         log.info("Copia de seguridad guardada en la nube.")
     except Exception as e:
-        log.error("Error guardando la DB en la nube: %s", e)
+        log.error("Error guardando la DB en la nube: %s", str(e))
 
 ESQUEMA = """
 CREATE TABLE IF NOT EXISTS eventos (
@@ -304,5 +305,3 @@ def inicializar_db():
     finally:
         conn.execute("PRAGMA foreign_keys=ON")
         conn.close()
-
-# perro
