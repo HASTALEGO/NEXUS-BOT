@@ -12,6 +12,8 @@ from discord.ext import commands, tasks
 from dotenv import dotenv_values, load_dotenv
 from flask import Flask
 
+# Integración del banner saturado estilizado
+from banner import log_evento, mostrar_banner, mostrar_resumen_comandos
 from creador_eventos import configurar_creador_eventos
 from database import conectar_db, inicializar_db
 from formatters import a_utc_iso, ahora, timestamp_discord
@@ -44,7 +46,7 @@ logging.basicConfig(
 log = logging.getLogger("bot_eventos")
 
 RUTA_ENV = Path(__file__).resolve().with_name(".env")
-load_dotenv(RUTA_ENV)  # junto a main.py: no depende del directorio desde el que se lance
+load_dotenv(RUTA_ENV)
 
 TOKEN = (os.getenv("DISCORD_TOKEN") or "").strip().strip("\"'")
 if not TOKEN:
@@ -230,7 +232,6 @@ async def tareas_eventos():
 
 @tareas_eventos.error
 async def error_tareas(error: Exception):
-    """Sin esto, una sola excepcion detendria el loop para siempre."""
     log.exception("El loop de tareas fallo, se reinicia", exc_info=error)
     if not tareas_eventos.is_running():
         tareas_eventos.restart()
@@ -243,13 +244,19 @@ async def antes_de_tareas():
 
 class BotEventos(commands.Bot):
     async def setup_hook(self):
-        """A diferencia de on_ready, se ejecuta una sola vez (no en cada reconexion)."""
+        # 1. Imprimir banner ASCII masivo
+        mostrar_banner()
+
+        log_evento("DATABASE", "Inicializando base de datos SQLite...", "INFO")
         inicializar_db()
+
+        log_evento("VIEWS", "Cargando vistas y persistencia de botones...", "INFO")
         inicializar_vistas(self)
 
-        # Cargar extensiones (Cogs)
+        log_evento("STATUS", "Cargando extensión status_checker...", "INFO")
         await self.load_extension("status_checker")
 
+        log_evento("MODULES", "Registrando eventos, calendario y valoraciones...", "INFO")
         configurar_creador_eventos(self)
         configurar_modulo_calendario(self)
         registrar_comandos_valoraciones(self)
@@ -262,12 +269,16 @@ class BotEventos(commands.Bot):
         for ev in eventos:
             self.add_view(EventoView(ev["id"]))
 
+        # Sincronización formateada
         if GUILD_OBJECT:
             self.tree.copy_global_to(guild=GUILD_OBJECT)
-            await self.tree.sync(guild=GUILD_OBJECT)
+            comandos = await self.tree.sync(guild=GUILD_OBJECT)
+            mostrar_resumen_comandos(len(comandos), f"GUILD: {GUILD_ID}")
         else:
-            await self.tree.sync()
+            comandos = await self.tree.sync()
+            mostrar_resumen_comandos(len(comandos), "GLOBAL (TODOS LOS SERVIDORES)")
 
+        log_evento("TASKS", "Desplegando loop de tareas en segundo plano...", "SYNC")
         tareas_eventos.start()
 
 
@@ -325,7 +336,7 @@ async def cmd_marcar_asistencia(interaction: discord.Interaction, evento_id: int
 
 @bot.event
 async def on_ready():
-    log.info("Bot listo: %s", bot.user)
+    log_evento("CORE_ONLINE", f"NEXUS BOT OPERATIVO COMO: {bot.user}", "OK")
 
 keep_alive()
 
