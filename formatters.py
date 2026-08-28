@@ -80,6 +80,34 @@ def canal_predeterminado_id() -> int:
     except (TypeError, ValueError):
         return 0
 
+LOCALES_A_ZONA = {
+    # idioma-REGION de Discord → IANA zone
+    "es-ES": "Europe/Madrid", "es-MX": "America/Mexico_City", "es-VE": "America/Caracas",
+    "es-AR": "America/Argentina/Buenos_Aires", "es-CO": "America/Bogota",
+    "es-CL": "America/Santiago", "es-PE": "America/Lima", "es-PA": "America/Panama",
+    "es-CR": "America/Costa_Rica", "es-GT": "America/Guatemala", "es-HN": "America/Honduras",
+    "es-SV": "America/El_Salvador", "es-NI": "America/Managua", "es-PY": "America/Asuncion",
+    "es-UY": "America/Montevideo", "es-EC": "America/Guayaquil", "es-BO": "America/La_Paz",
+    "es-DO": "America/Santo_Domingo", "es-CU": "America/Havana", "es-US": "America/New_York",
+    "pt-BR": "America/Sao_Paulo", "en-US": "America/New_York", "en-GB": "Europe/London",
+    "en-ES": "Europe/Madrid", "en-CA": "America/Toronto", "fr-FR": "Europe/Paris",
+    "it-IT": "Europe/Rome", "de-DE": "Europe/Berlin", "pt-PT": "Europe/Lisbon",
+}
+
+LOCALES_A_ZONA_NORM = {k.lower(): v for k, v in LOCALES_A_ZONA.items()}
+
+def zona_desde_locale(locale_str: str):
+    """Deduce la zona horaria a partir del idioma/región del usuario en Discord."""
+    if not locale_str:
+        return None
+    clave = locale_str.strip().lower()
+    if clave in LOCALES_A_ZONA_NORM:
+        return LOCALES_A_ZONA_NORM[clave]
+    # fallback por idioma genérico: es-XX → Europe/Madrid
+    if clave.startswith("es"):
+        return "Europe/Madrid"
+    return None
+
 DIA_SEMANA = {
     "lunes": 0, "martes": 1, "miercoles": 2, "miércoles": 2,
     "jueves": 3, "viernes": 4, "sabado": 5, "sábado": 5, "domingo": 6,

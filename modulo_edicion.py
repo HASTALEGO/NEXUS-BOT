@@ -13,7 +13,8 @@ from database import (
     actualizar_opcion,
     conectar_db,
     obtener_eventos_creador,
-    obtener_zona_horaria,
+    zona_horaria_defecto,
+    zona_horaria_guardada,
 )
 from formatters import (
     COLOR_BLANCO,
@@ -22,6 +23,7 @@ from formatters import (
     canal_predeterminado_id,
     interpretar_fecha,
     timestamp_discord,
+    zona_desde_locale,
 )
 from vistas_eventos import actualizar_evento_publicado, obtener_o_crear_hilo, publicar_evento
 
@@ -29,6 +31,15 @@ log = logging.getLogger(__name__)
 
 POR_PAGINA = 15
 SESIONES_ACTIVAS = set()
+
+
+def _zona_usuario(interaction):
+    """Zona horaria efectiva: la guardada, o la deducida del locale, o la del bot."""
+    return (
+        zona_horaria_guardada(interaction.user.id)
+        or zona_desde_locale(getattr(interaction, "locale", "") or "")
+        or zona_horaria_defecto()
+    )
 
 
 class _Asistente:
@@ -255,11 +266,11 @@ async def iniciar_edicion_evento(bot: commands.Bot, event_id: int, interaction: 
                     f"► Escribe la nueva fecha en lenguaje natural:\n"
                     f"► 'en 1 hora' · 'mañana a las 18:00' · 'viernes a las 17:00'\n"
                     f"► 'viernes 5:00 pm' · '17:30' · '20/09/2026 12:30'\n"
-                    f"§ Se interpreta en tu zona horaria ({obtener_zona_horaria(usuario.id)}).",
+                    f"§ Tu zona horaria (detectada): **{_zona_usuario(interaction)}**.",
                 )
                 r = await flujo.esperar()
                 if r not in ("CANCEL", "TIMEOUT"):
-                    fecha = interpretar_fecha(r, obtener_zona_horaria(usuario.id))
+                    fecha = interpretar_fecha(r, _zona_usuario(interaction))
                     if fecha and fecha > ahora():
                         actualizar_campos_evento(event_id, start_time=a_utc_iso(fecha))
                         cambio = True
@@ -432,12 +443,12 @@ async def iniciar_repetir_evento(bot: commands.Bot, interaction: discord.Interac
                 f"► Escribe la fecha en lenguaje natural:\n"
                 f"► 'en 1 hora' · 'mañana a las 18:00' · 'viernes a las 17:00'\n"
                 f"► 'viernes 5:00 pm' · '17:30' · '20/09/2026 12:30'\n"
-                f"§ Se interpreta en tu zona horaria ({obtener_zona_horaria(usuario.id)}).",
+                f"§ Tu zona horaria (detectada): **{_zona_usuario(interaction)}**.",
             )
             r = await flujo.esperar()
             if r in ("CANCEL", "TIMEOUT"):
                 return await flujo.enviar("CANCELADO", "‼ Reutilización cancelada.", False)
-            fecha = interpretar_fecha(r, obtener_zona_horaria(usuario.id))
+            fecha = interpretar_fecha(r, _zona_usuario(interaction))
             if fecha and fecha > ahora():
                 break
             await flujo.enviar("ERROR", "‼ No he entendido la fecha o está en el pasado.")

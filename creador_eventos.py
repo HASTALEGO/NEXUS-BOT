@@ -6,10 +6,10 @@ from typing import List, Optional, Any
 import discord
 from discord.ext import commands
 
-from database import conectar_db, obtener_zona_horaria
+from database import conectar_db, zona_horaria_defecto, zona_horaria_guardada
 from formatters import (
     COLOR_BLANCO, a_utc_iso, ahora, canal_predeterminado_id, formatear_duracion,
-    formatear_recordatorios, interpretar_fecha, timestamp_discord,
+    formatear_recordatorios, interpretar_fecha, timestamp_discord, zona_desde_locale,
 )
 from vistas_eventos import publicar_evento
 
@@ -39,7 +39,7 @@ async def ejecutar_creador_lineal(bot: commands.Bot, interaction: discord.Intera
             "multiple_registrations": False, "allow_waitlist": True, "mention_roles": [],
             "restricted_roles": [], "color_name": "Blanco", "color": 0xFFFFFF,
             "image_url": None, "location": None, "auto_voice": False, "reminders": [],
-            "close_before_minutes": 0, "dm_reminders": True
+            "close_before_minutes": 0, "dm_reminders": True, "max_personas": 0
         }
 
         async def enviar_paso(titulo: str, descripcion: str, aviso_error: str = None, mostrar_cancelar: bool = True):
@@ -148,7 +148,11 @@ async def ejecutar_creador_lineal(bot: commands.Bot, interaction: discord.Intera
             error_actual = "Descripción demasiado larga (máximo 2000 caracteres)."
 
         # PASO 4: Fecha y Hora (lenguaje natural, en la zona horaria del usuario)
-        zona_usuario = obtener_zona_horaria(usuario.id)
+        zona_usuario = (
+            zona_horaria_guardada(usuario.id)
+            or zona_desde_locale(interaction.locale)
+            or zona_horaria_defecto()
+        )
         while True:
             await enviar_paso(
                 "¿FECHA Y HORA DE INICIO?",
@@ -158,7 +162,7 @@ async def ejecutar_creador_lineal(bot: commands.Bot, interaction: discord.Intera
                 f"► 'viernes a las 17:00' · 'viernes 5:00 pm'\n"
                 f"► '17:30' (hoy; si ya pasó, mañana)\n"
                 f"► '20/08/2026 12:30' (o solo la fecha → a las 20:00)\n"
-                f"§ Se interpreta en TU zona horaria ({zona_usuario}). Usa /zona_horaria para cambiarla.",
+                f"§ Tu zona horaria (detectada): **{zona_usuario}**. Usa /zona_horaria si quieres corregirla.",
                 error_actual,
             )
             error_actual, resp = None, await esperar_respuesta()
@@ -210,27 +214,53 @@ async def ejecutar_creador_lineal(bot: commands.Bot, interaction: discord.Intera
 
         # PASO 8: Lista de Espera
         while True:
-            desc = "► [1] Sí (Habilitar lista de espera cuando se me llenen las plazas)\n► [2] No (Rechazar inscripciones cuando se llene)\n\n§ Introduce 1 o 2:"
+            desc = "► [1] Sí (Habilitar lista de espera cuando se me llenen las plazas)\n► [2] No (Rechazar inscripciones cuando se llene)\n\n§ Introduce 1, 2, 'sí' o 'no':"
             await enviar_paso("¿PERMITIR LISTA DE ESPERA (RESERVA)?", desc, error_actual)
             error_actual, resp = None, await esperar_respuesta()
             if resp in ("TIMEOUT", "CANCEL"): 
                 return await enviar_paso("CREACIÓN CANCELADA", "‼ Cancelado.", mostrar_cancelar=False)
-            if resp in ("1", "2"):
-                datos["allow_waitlist"] = (resp == "1")
+            r = resp.strip().lower()
+            if r in ("1", "sí", "si", "s", "y", "yes"):
+                datos["allow_waitlist"] = True
+                break
+            if r in ("2", "no", "n"):
+                datos["allow_waitlist"] = False
                 break
             error_actual = "Introduce 1 o 2."
 
-        # PASO 9: Inscripciones Múltiples
+        # PASO 9: Inscripciones Múltiples (1 = Sí, 2 = No)
         while True:
-            desc = "► [1] No (Una sola opción por usuario)\n► [2] Sí (Inscripción múltiple)\n\n§ Introduce 1 o 2:"
+            desc = "► [1] Sí (Permitir inscribirse varias veces)\n► [2] No (Una sola inscripción por persona)\n\n§ Introduce 1, 2, 'sí' o 'no':"
             await enviar_paso("¿PERMITIR INSCRIPCIONES MÚLTIPLES?", desc, error_actual)
             error_actual, resp = None, await esperar_respuesta()
             if resp in ("TIMEOUT", "CANCEL"): 
                 return await enviar_paso("CREACIÓN CANCELADA", "‼ Cancelado.", mostrar_cancelar=False)
-            if resp in ("1", "2"):
-                datos["multiple_registrations"] = (resp == "2")
+            r = resp.strip().lower()
+            if r in ("1", "sí", "si", "s", "y", "yes"):
+                datos["multiple_registrations"] = True
+                break
+            if r in ("2", "no", "n"):
+                datos["multiple_registrations"] = False
                 break
             error_actual = "Introduce 1 o 2."
+
+        # PASO 9B: Límite de personas (cupo máximo que acepta la misión)
+        while True:
+            desc = "► Máximo de personas que pueden **ACEPTAR** la misión.\n► Escribe 'ninguno' para sin límite.\n\n§ Introduce un número:"
+            await enviar_paso("¿CUÁL ES EL LÍMITE DE PERSONAS?", desc, error_actual)
+            error_actual, resp = None, await esperar_respuesta()
+            if resp in ("TIMEOUT", "CANCEL"): 
+                return await enviar_paso("CREACIÓN CANCELADA", "‼ Cancelado.", mostrar_cancelar=False)
+            if resp.strip().lower() in ("ninguno", "no", "none", "infinito", "∞", "0"):
+                datos["signup_options"][0]["max_slots"] = None
+                datos["max_personas"] = 0
+                break
+            if resp.strip().isdigit() and int(resp.strip()) > 0:
+                cupo = int(resp.strip())
+                datos["signup_options"][0]["max_slots"] = cupo
+                datos["max_personas"] = cupo
+                break
+            error_actual = "Introduce un número mayor que 0 o 'ninguno'."
 
         # PASO 10: Menciones
         conn = conectar_db()
@@ -457,6 +487,7 @@ async def ejecutar_creador_lineal(bot: commands.Bot, interaction: discord.Intera
             f"► Frecuencia: {datos['frequency']}",
             f"► Canal de Anuncio: {datos['publish_channel'].mention}",
             f"► Lista de Espera: {'Habilitada' if datos['allow_waitlist'] else 'Deshabilitada'}",
+            f"► Límite de Personas: {datos['max_personas'] if datos['max_personas'] else 'Sin límite'}",
             f"► Acceso Restringido: {', '.join('@' + r.name for r in datos['restricted_roles']) or 'Todo el servidor'}",
             f"► Voz Automática: {'Sí' if datos['auto_voice'] else 'No'}",
             f"► Recordatorios: {formatear_recordatorios(datos['reminders'])}",

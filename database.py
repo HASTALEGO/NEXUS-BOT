@@ -492,22 +492,30 @@ def remover_rol_valoracion(role_id: int):
 def zona_horaria_defecto() -> str:
     return TIMEZONE.key
 
-def obtener_zona_horaria(user_id: int) -> str:
-    """Zona horaria del usuario (IATA name, p.ej. 'America/Caracas'); si no tiene, la del bot."""
+def zona_horaria_guardada(user_id: int) -> str:
+    """Devuelve la zona guardada del usuario, o '' si nunca la configuró."""
     conn = conectar_db()
     try:
-        fila = conn.execute(
-            "SELECT timezone FROM zonas_horarias WHERE user_id = ?", (user_id,)
-        ).fetchone()
-        if fila and fila["timezone"]:
-            try:
-                ZoneInfo(fila["timezone"])
-                return fila["timezone"]
-            except Exception:
-                pass
-        return zona_horaria_defecto()
+        try:
+            fila = conn.execute(
+                "SELECT timezone FROM zonas_horarias WHERE user_id = ?", (user_id,)
+            ).fetchone()
+        except sqlite3.OperationalError:
+            return ""
+        if not fila or not fila["timezone"]:
+            return ""
+        try:
+            ZoneInfo(fila["timezone"])
+        except Exception:
+            return ""
+        return fila["timezone"]
     finally:
         conn.close()
+
+def obtener_zona_horaria(user_id: int) -> str:
+    """Zona horaria del usuario (IANA name, p.ej. 'America/Caracas'); si no tiene, la del bot."""
+    guardada = zona_horaria_guardada(user_id)
+    return guardada or zona_horaria_defecto()
 
 def setear_zona_horaria(user_id: int, timezone_nombre: str) -> bool:
     """Guarda la zona horaria del usuario. Devuelve True solo si el nombre es válido."""
