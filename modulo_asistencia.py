@@ -55,21 +55,29 @@ def _si_respuesta(texto: str) -> bool:
 
 async def desencadenar_asistencia(bot: discord.Client, evento):
     """Pregunta al creador por DM si el evento concluyó (se lanza desde main)."""
-    if evento["attendance_checked"] or evento["creator_id"] in CONTROLES_ACTIVOS:
+    log.info("Intentando desencadenar asistencia para evento %s (creator: %s)", evento["id"], evento["creator_id"])
+
+    if evento["attendance_checked"]:
+        log.info("Evento %s ya tiene attendance_checked=1, saltando", evento["id"])
+        return
+    if evento["creator_id"] in CONTROLES_ACTIVOS:
+        log.info("Usuario %s ya tiene control de asistencia activo, saltando", evento["creator_id"])
         return
 
     creator_id = evento["creator_id"]
-    # Check if user has an active edit flow - if so, skip attendance for now
+    # Check if user has any other active DM flow - if so, retry later
     active = get_active_flow(creator_id)
     if active and active != FLOW_TYPE:
-        log.info("User %s has active flow '%s', deferring attendance check", creator_id, active)
+        log.info("User %s has active flow '%s', reintentando asistencia en 60s", creator_id, active)
+        CONTROLES_ACTIVOS.discard(creator_id)
+        unregister_flow(creator_id, FLOW_TYPE)
+        asyncio.create_task(_reintento_asistencia(bot, evento, 1))
         return
 
     if not register_flow(creator_id, FLOW_TYPE):
         log.warning("Cannot register attendance flow for user %s", creator_id)
         return
 
-    marcar_asistencia_revisada(evento["id"])
     CONTROLES_ACTIVOS.add(creator_id)
 
     try:
@@ -85,6 +93,7 @@ async def desencadenar_asistencia(bot: discord.Client, evento):
                 f"{ICON_BULLET} [N] No, aún en curso"
             ),
         )
+        log.info("DM de control de asistencia enviado al creador %s para evento %s", creator_id, evento["id"])
     except discord.HTTPException:
         log.warning("No se pudo contactar al creador %s para el control de asistencia", creator_id)
         CONTROLES_ACTIVOS.discard(creator_id)
@@ -94,13 +103,18 @@ async def desencadenar_asistencia(bot: discord.Client, evento):
     try:
         msg = await bot.wait_for("message", check=_chequeo_dm(creator_id), timeout=TIMEOUT_PASO)
     except asyncio.TimeoutError:
+        log.warning("Timeout esperando respuesta del creador %s para evento %s", creator_id, evento["id"])
         CONTROLES_ACTIVOS.discard(creator_id)
         unregister_flow(creator_id, FLOW_TYPE)
         return
 
+    log.info("Respuesta del creador %s: '%s'", creator_id, msg.content.strip())
+
     if _si_respuesta(msg.content):
         try:
             await tomar_asistencia(bot, evento)
+            marcar_asistencia_revisada(evento["id"])
+            log.info("Asistencia completada para evento %s", evento["id"])
         finally:
             CONTROLES_ACTIVOS.discard(creator_id)
             unregister_flow(creator_id, FLOW_TYPE)

@@ -60,10 +60,13 @@ def evento_finalizado(evento) -> bool:
 
 
 def inscripciones_cerradas_por_tiempo(evento) -> bool:
-    """Comprueba si las inscripciones se han cerrado debido a close_before_minutes."""
+    """Comprueba si las inscripciones se han cerrado."""
     inicio = inicio_evento(evento)
     if not inicio:
         return False
+    # Cerrar cuando el evento ya empezó
+    if ahora() >= inicio:
+        return True
     minutos_cierre = evento["close_before_minutes"] or 0
     if minutos_cierre <= 0:
         return False

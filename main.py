@@ -156,11 +156,15 @@ async def enviar_recordatorios(conn, ahora_actual):
             conn.execute("UPDATE recordatorios SET sent = 1 WHERE id = ?", (rec["reminder_id"],))
             conn.commit()
 
-            # Cuando se envía el último recordatorio (minutes_before = 0), borrar todos y cerrar inscripciones
+            # Cuando se envía el último recordatorio (minutes_before = 0), borrar todos y actualizar el mensaje
             if rec["minutes_before"] == 0:
                 conn.execute("DELETE FROM recordatorios WHERE event_id = ?", (rec["id"],))
                 conn.commit()
                 log.info("Recordatorios eliminados para evento %s (evento iniciado)", rec["id"])
+                try:
+                    await actualizar_evento_publicado(rec["id"])
+                except Exception:
+                    log.exception("No se pudo actualizar el evento %s tras borrar recordatorios", rec["id"])
 
 async def gestionar_ciclo_de_vida(conn, ahora_actual):
     eventos = conn.execute("""

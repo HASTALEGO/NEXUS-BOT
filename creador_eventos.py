@@ -7,6 +7,7 @@ import discord
 from discord.ext import commands
 
 from database import conectar_db, zona_horaria_defecto, zona_horaria_guardada
+from dm_flows import get_active_flow, make_check, register_flow, unregister_flow
 from formatters import (
     COLOR_BLANCO, a_utc_iso, ahora, canal_predeterminado_id, formatear_duracion,
     formatear_recordatorios, interpretar_fecha, timestamp_discord, zona_desde_locale,
@@ -22,11 +23,16 @@ COLORES = {
     "Blanco": 0xFFFFFF, "Negro": 0x000000
 }
 SESIONES_ACTIVAS = set()
+FLOW_TYPE = "creation"
 
 
 async def ejecutar_creador_lineal(bot: commands.Bot, interaction: discord.Interaction):
     usuario, guild = interaction.user, interaction.guild
     if not guild:
+        return
+    
+    if not register_flow(usuario.id, FLOW_TYPE):
+        await interaction.followup.send("‼ Ya tienes un asistente DM activo. Espera a que termine.", ephemeral=True)
         return
     
     SESIONES_ACTIVAS.add(usuario.id)
@@ -54,13 +60,7 @@ async def ejecutar_creador_lineal(bot: commands.Bot, interaction: discord.Intera
             return msg_asistente
 
         async def esperar_respuesta():
-            def check(m: discord.Message):
-                # Validar autor e ignorar bots
-                if m.author.bot or m.author.id != usuario.id:
-                    return False
-                # Aceptar si el canal es privado (DMChannel)
-                return isinstance(m.channel, discord.DMChannel)
-
+            check = make_check(usuario.id, FLOW_TYPE)
             try:
                 msg = await bot.wait_for("message", check=check, timeout=TIMEOUT_PASO)
                 c = msg.content.strip()
@@ -623,6 +623,7 @@ async def ejecutar_creador_lineal(bot: commands.Bot, interaction: discord.Intera
         await avisar_fallo(interaction, "‼ El asistente falló por un error interno. Vuelve a intentarlo.")
     finally:
         SESIONES_ACTIVAS.discard(usuario.id)
+        unregister_flow(usuario.id, FLOW_TYPE)
 
 
 async def avisar_fallo(interaction: discord.Interaction, mensaje: str):
