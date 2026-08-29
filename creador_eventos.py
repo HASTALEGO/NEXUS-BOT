@@ -305,8 +305,12 @@ async def ejecutar_creador_lineal(bot: commands.Bot, interaction: discord.Intera
                 
         # PASO 10: Menciones
         conn = conectar_db()
-        filas_m = conn.execute("SELECT role_id FROM roles_mencionables WHERE guild_id = ?", (guild.id,)).fetchall()
-        conn.close()
+        try:
+            filas_m = conn.execute("SELECT role_id FROM roles_mencionables WHERE guild_id = ?", (guild.id,)).fetchall()
+        except Exception:
+            filas_m = []
+        finally:
+            conn.close()
         
         ids_permitidos = {int(f["role_id"]) for f in filas_m} if filas_m else set()
         roles = [guild.get_role(rid) for rid in ids_permitidos if guild.get_role(rid)] if ids_permitidos else guild.roles
@@ -583,7 +587,10 @@ async def ejecutar_creador_lineal(bot: commands.Bot, interaction: discord.Intera
                 [(evento_id, m) for m in datos["reminders"]],
             )
 
-            bloqueados = conn.execute("SELECT role_id FROM roles_bloqueados WHERE guild_id = ?", (guild.id,)).fetchall()
+            try:
+                bloqueados = conn.execute("SELECT role_id FROM roles_bloqueados WHERE guild_id = ?", (guild.id,)).fetchall()
+            except Exception:
+                bloqueados = []
             conn.executemany(
                 "INSERT INTO evento_restricciones (event_id, role_id, tipo) VALUES (?, ?, ?)",
                 [(evento_id, r.id, "permitido") for r in datos["restricted_roles"]]
