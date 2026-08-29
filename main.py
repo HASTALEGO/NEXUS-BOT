@@ -156,6 +156,12 @@ async def enviar_recordatorios(conn, ahora_actual):
             conn.execute("UPDATE recordatorios SET sent = 1 WHERE id = ?", (rec["reminder_id"],))
             conn.commit()
 
+            # Cuando se envía el último recordatorio (minutes_before = 0), borrar todos y cerrar inscripciones
+            if rec["minutes_before"] == 0:
+                conn.execute("DELETE FROM recordatorios WHERE event_id = ?", (rec["id"],))
+                conn.commit()
+                log.info("Recordatorios eliminados para evento %s (evento iniciado)", rec["id"])
+
 async def gestionar_ciclo_de_vida(conn, ahora_actual):
     eventos = conn.execute("""
         SELECT * FROM eventos
@@ -183,7 +189,9 @@ async def cerrar_evento(evento, ahora_actual):
     await actualizar_evento_publicado(evento["id"])
 
     # Punto 2: desencadenar el control de asistencia y feedback con el creador
-    asyncio.create_task(desencadenar_asistencia(bot, evento))
+    # Convertir Row a dict para que no se invalide al cerrar la conexión
+    evento_dict = dict(evento)
+    asyncio.create_task(desencadenar_asistencia(bot, evento_dict))
 
     if evento["frequency"] not in FRECUENCIAS_REPETIBLES:
         conn = conectar_db()
