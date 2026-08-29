@@ -4,9 +4,13 @@ Flujo: al terminar la duración de un evento, el bot pregunta al creador
 (Y/N) por DM si la misión concluyó. Si es afirmativo, se toma la asistencia
 uno a uno de los confirmados, se marca quién asistió y después solo los
 asistentes reciben la invitación por DM a valorar el evento.
+
+Si el creador responde que aún no ha concluido, se le ofrecen opciones
+de aplazamiento para reintentar más tarde.
 """
 import asyncio
 import logging
+import re
 
 import discord
 
@@ -82,18 +86,70 @@ async def desencadenar_asistencia(bot: discord.Client, evento):
         CONTROLES_ACTIVOS.discard(creator_id)
         return
 
-    if not _si_respuesta(msg.content):
+    if _si_respuesta(msg.content):
         try:
-            await creador.send(f"{ICON_BULLET} Entendido. Se omite el control de asistencia de este evento.")
+            await tomar_asistencia(bot, evento)
+        finally:
+            CONTROLES_ACTIVOS.discard(creator_id)
+        return
+
+    # El creador dijo que aún no concluye → ofrecer aplazamiento
+    try:
+        await _enviar_embed(
+            creador,
+            "§ APLAZAR CONTROL DE ASISTENCIA §",
+            (
+                f"{ICON_BULLET} La misión **{evento['title']}** sigue en curso.\n"
+                f"{ICON_BULLET} ¿Cuándo deseas reintentar?\n\n"
+                f"► Ejemplos: 30m, 1h, 2h 30m\n"
+                f"► [X] Omitir control de asistencia"
+            ),
+        )
+    except discord.HTTPException:
+        CONTROLES_ACTIVOS.discard(creator_id)
+        return
+
+    try:
+        msg2 = await bot.wait_for("message", check=_chequeo_dm(creator_id), timeout=TIMEOUT_PASO)
+    except asyncio.TimeoutError:
+        CONTROLES_ACTIVOS.discard(creator_id)
+        return
+
+    opcion = msg2.content.strip().lower()
+    if opcion in ("x", "cancel", "cancelar", "salir"):
+        try:
+            await creador.send(f"{ICON_BULLET} Control de asistencia omitido. No se volverá a preguntar.")
         except discord.HTTPException:
             pass
         CONTROLES_ACTIVOS.discard(creator_id)
         return
 
-    try:
-        await tomar_asistencia(bot, evento)
-    finally:
+    cnt = opcion
+    h = re.search(r"(\d+)\s*h", cnt)
+    m = re.search(r"(\d+)\s*m", cnt)
+    total_min = (int(h.group(1)) * 60 if h else 0) + (int(m.group(1)) if m else 0)
+
+    if total_min > 0:
+        try:
+            await creador.send(
+                f"{ICON_CHECK} Entendido. Volveré a preguntar en **{total_min} minutos**."
+            )
+        except discord.HTTPException:
+            pass
         CONTROLES_ACTIVOS.discard(creator_id)
+        asyncio.create_task(_reintento_asistencia(bot, evento, total_min))
+    else:
+        try:
+            await creador.send(f"{ICON_ALERT} Formato inválido. Ejemplo: '30m', '1h', '1h 30m'")
+        except discord.HTTPException:
+            pass
+        CONTROLES_ACTIVOS.discard(creator_id)
+
+
+async def _reintento_asistencia(bot: discord.Client, evento: dict, minutos: int):
+    """Espera el tiempo indicado y vuelve a preguntar al creador."""
+    await asyncio.sleep(minutos * 60)
+    await desencadenar_asistencia(bot, evento)
 
 
 async def tomar_asistencia(bot: discord.Client, evento):
