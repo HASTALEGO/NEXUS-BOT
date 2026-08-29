@@ -49,14 +49,18 @@ async def ejecutar_creador_lineal(bot: commands.Bot, interaction: discord.Intera
             if mostrar_cancelar:
                 embed.set_footer(text="► Escribe 'cancel' en cualquier momento para cancelar ◄")
             
-            # Cada paso envía un embed NUEVO en vez de sustituir el anterior.
             msg_asistente = await usuario.send(embed=embed)
             log.info("Paso '%s' enviado a %s", titulo, usuario.id)
             return msg_asistente
 
         async def esperar_respuesta():
-            def check(m):
-                return m.author.id == usuario.id and m.guild is None
+            def check(m: discord.Message):
+                # Validar autor e ignorar bots
+                if m.author.bot or m.author.id != usuario.id:
+                    return False
+                # Aceptar si el canal es privado (DMChannel)
+                return isinstance(m.channel, discord.DMChannel)
+
             try:
                 msg = await bot.wait_for("message", check=check, timeout=TIMEOUT_PASO)
                 c = msg.content.strip()
@@ -147,7 +151,7 @@ async def ejecutar_creador_lineal(bot: commands.Bot, interaction: discord.Intera
             datos["description"] = texto
             break
 
-# PASO 4: Fecha y Hora (lenguaje natural, en la zona horaria del usuario)
+        # PASO 4: Fecha y Hora
         try:
             zona_usuario = (
                 zona_horaria_guardada(usuario.id)
@@ -155,24 +159,21 @@ async def ejecutar_creador_lineal(bot: commands.Bot, interaction: discord.Intera
                 or zona_horaria_defecto()
             )
         except Exception as e:
-            print(f"[ERROR ZONA HORARIA]: {e}")
+            log.error("[ERROR ZONA HORARIA]: %s", e)
             zona_usuario = zona_horaria_defecto()
 
         while True:
-            try:
-                await enviar_paso(
-                    "¿FECHA Y HORA DE INICIO?",
-                    f"► Responda en lenguaje natural:\n"
-                    f"► 'en 30 min' · 'en 1 hora' · 'en 927 minutos'\n"
-                    f"► 'mañana a las 4:00 PM' · 'mañana 17:30'\n"
-                    f"► 'viernes a las 17:00' · 'viernes 5:00 pm'\n"
-                    f"► '17:30' (hoy; si ya pasó, mañana)\n"
-                    f"► '20/08/2026 12:30' (o solo la fecha → a las 20:00)\n"
-                    f"§ Tu zona horaria (detectada): **{zona_usuario}**. Usa /zona_horaria si quieres corregirla.",
-                    error_actual,
-                )
-            except Exception as e:
-                print(f"[ERROR AL ENVIAR PASO FECHA]: {e}")
+            await enviar_paso(
+                "¿FECHA Y HORA DE INICIO?",
+                f"► Responda en lenguaje natural:\n"
+                f"► 'en 30 min' · 'en 1 hora' · 'en 927 minutos'\n"
+                f"► 'mañana a las 4:00 PM' · 'mañana 17:30'\n"
+                f"► 'viernes a las 17:00' · 'viernes 5:00 pm'\n"
+                f"► '17:30' (hoy; si ya pasó, mañana)\n"
+                f"► '20/08/2026 12:30' (o solo la fecha → a las 20:00)\n"
+                f"§ Tu zona horaria (detectada): **{zona_usuario}**. Usa /zona_horaria si quieres corregirla.",
+                error_actual,
+            )
 
             error_actual, resp = None, await esperar_respuesta()
 
@@ -182,7 +183,7 @@ async def ejecutar_creador_lineal(bot: commands.Bot, interaction: discord.Intera
             try:
                 fecha = interpretar_fecha(resp, zona_usuario)
             except Exception as e:
-                print(f"[ERROR EN INTERPRETAR_FECHA]: {e}")
+                log.error("[ERROR EN INTERPRETAR_FECHA]: %s", e)
                 fecha = None
 
             if not fecha:
@@ -223,7 +224,7 @@ async def ejecutar_creador_lineal(bot: commands.Bot, interaction: discord.Intera
                 break
             error_actual = "Selecciona un número entre 1 y 4."
 
-        # PASO 7: Opciones de inscripción predeterminadas
+        # PASO 7: Opciones predeterminadas
         datos["signup_options"] = [
             {"name": "[√] Acepto", "max_slots": None},
             {"name": "[X] Rechazo", "max_slots": None},
@@ -246,7 +247,7 @@ async def ejecutar_creador_lineal(bot: commands.Bot, interaction: discord.Intera
                 break
             error_actual = "Introduce 1 o 2."
 
-        # PASO 9: Inscripciones Múltiples (1 = Sí, 2 = No)
+        # PASO 9: Inscripciones Múltiples
         while True:
             desc = "► [1] Sí (Permitir inscribirse varias veces)\n► [2] No (Una sola inscripción por persona)\n\n§ Introduce 1, 2, 'sí' o 'no':"
             await enviar_paso("¿PERMITIR INSCRIPCIONES MÚLTIPLES?", desc, error_actual)
@@ -262,7 +263,7 @@ async def ejecutar_creador_lineal(bot: commands.Bot, interaction: discord.Intera
                 break
             error_actual = "Introduce 1 o 2."
 
-# PASO 9B: Límite de personas (cupo máximo que acepta la misión)
+        # PASO 9B: Límite de personas
         while True:
             desc = "► Máximo de personas que pueden **ACEPTAR** la misión.\n► Escribe 'ninguno' para sin límite.\n\n§ Introduce un número:"
             await enviar_paso("¿CUÁL ES EL LÍMITE DE PERSONAS?", desc, error_actual)
@@ -283,7 +284,6 @@ async def ejecutar_creador_lineal(bot: commands.Bot, interaction: discord.Intera
                 error_actual = "Introduce un número mayor que 0 o 'ninguno'."
                 continue
 
-            # Asignación segura en signup_options evitando IndexError
             if not datos.get("signup_options"):
                 datos["signup_options"] = [{"name": "Asistir", "max_slots": cupo}]
             else:
@@ -473,7 +473,7 @@ async def ejecutar_creador_lineal(bot: commands.Bot, interaction: discord.Intera
                 break
             error_actual = "Formato de recordatorios inválido. Ejemplo: '1h, 30m'"
 
-        # PASO 14B: Cierre automático de inscripciones directas
+        # PASO 14B: Cierre automático
         while True:
             desc = ("► Cuánto antes de la hora de inicio se cierran las inscripciones DIRECTAS.\n"
                     "► La lista de espera sigue activa y promueve aunque esté cerrado.\n\n"
@@ -495,7 +495,7 @@ async def ejecutar_creador_lineal(bot: commands.Bot, interaction: discord.Intera
                 break
             error_actual = "Formato inválido. Ejemplo: '30m', '1h', '1h 30m'"
 
-        # PASO 14C: Recordatorios privados por DM
+        # PASO 14C: Recordatorios por DM
         while True:
             desc = "► [1] Sí (Enviar DM a cada confirmado antes del inicio)\n► [2] No (Solo avisos en el hilo)\n\n§ Introduce 1 o 2:"
             await enviar_paso("¿RECORDATORIOS PRIVADOS POR DM?", desc, error_actual)
@@ -534,14 +534,13 @@ async def ejecutar_creador_lineal(bot: commands.Bot, interaction: discord.Intera
                 break
             error_actual = "Introduce 1 o 2."
 
-        # Verificación final de que el canal de destino aún existe en Discord
         canal = datos["publish_channel"]
         if not canal or not guild.get_channel(canal.id):
             return await enviar_paso("ERROR AL PUBLICAR", "‼ El canal seleccionado ya no existe en el servidor.", mostrar_cancelar=False)
 
         loc_id = datos["location"].id if datos["location"] else None
 
-# Publicación en Base de Datos
+        # Publicación en BD
         conn = conectar_db()
         try:
             cursor = conn.execute("""
@@ -582,12 +581,11 @@ async def ejecutar_creador_lineal(bot: commands.Bot, interaction: discord.Intera
         finally:
             conn.close()
 
-        # Publicar evento visualmente en el canal
         menciones_str = " ".join(r.mention for r in datos["mention_roles"]) or None
         _, hilo = await publicar_evento(evento_id, canal, menciones_str)
         if hilo:
             await hilo.send(
-                f"{ICON_BULLET} **Hilo del evento iniciado.** Canal oficial para recordatorios y avisos "
+                f"► **Hilo del evento iniciado.** Canal oficial para recordatorios y avisos "
                 f"del evento de {usuario.mention}."
             )
 
@@ -609,7 +607,6 @@ async def ejecutar_creador_lineal(bot: commands.Bot, interaction: discord.Intera
 
 
 async def avisar_fallo(interaction: discord.Interaction, mensaje: str):
-    """Avisa en la interacción si el asistente falla o no se pueden mandar DMs."""
     try:
         await interaction.followup.send(mensaje, ephemeral=True)
     except discord.HTTPException:
