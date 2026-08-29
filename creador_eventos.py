@@ -263,9 +263,13 @@ async def ejecutar_creador_lineal(bot: commands.Bot, interaction: discord.Intera
                 break
             error_actual = "Introduce 1 o 2."
 
-        # PASO 9B: Límite de personas
+# PASO 9B: Límite de personas (cupo máximo)
         while True:
-            desc = "► Máximo de personas que pueden **ACEPTAR** la misión.\n► Escribe 'ninguno' para sin límite.\n\n§ Introduce un número:"
+            desc = (
+                "► Máximo de personas que pueden **ACEPTAR** la misión.\n"
+                "► Escribe 'ninguno' para sin límite.\n\n"
+                "§ Introduce un número:"
+            )
             await enviar_paso("¿CUÁL ES EL LÍMITE DE PERSONAS?", desc, error_actual)
             error_actual, resp = None, await esperar_respuesta()
             
@@ -274,9 +278,11 @@ async def ejecutar_creador_lineal(bot: commands.Bot, interaction: discord.Intera
             
             val = resp.strip().lower()
 
+            # 1. Validar si el usuario no quiere límite
             if val in ("ninguno", "no", "none", "infinito", "∞", "0"):
                 cupo = None
                 datos["max_personas"] = 0
+            # 2. Validar si introdujo un número válido
             elif val.isdigit() and int(val) > 0:
                 cupo = int(val)
                 datos["max_personas"] = cupo
@@ -284,13 +290,19 @@ async def ejecutar_creador_lineal(bot: commands.Bot, interaction: discord.Intera
                 error_actual = "Introduce un número mayor que 0 o 'ninguno'."
                 continue
 
+            # 3. Asignación ultra-segura para evitar que la corrutina muera
             if not datos.get("signup_options"):
-                datos["signup_options"] = [{"name": "Asistir", "max_slots": cupo}]
+                datos["signup_options"] = [
+                    {"name": "[√] Acepto", "max_slots": cupo},
+                    {"name": "[X] Rechazo", "max_slots": None},
+                    {"name": "[?] Indeciso", "max_slots": None}
+                ]
             else:
                 datos["signup_options"][0]["max_slots"] = cupo
 
+            # Avanza con éxito al Paso 10
             break
-        
+                
         # PASO 10: Menciones
         conn = conectar_db()
         filas_m = conn.execute("SELECT role_id FROM roles_mencionables WHERE guild_id = ?", (guild.id,)).fetchall()
