@@ -21,6 +21,7 @@ from database import (
     obtener_inscritos_evento,
     registrar_asistencia,
 )
+from dm_flows import get_active_flow, make_check, register_flow, unregister_flow
 from formatters import (
     COLOR_MONOCHROME,
     ICON_ALERT,
@@ -33,6 +34,7 @@ log = logging.getLogger(__name__)
 
 TIMEOUT_PASO = 180
 CONTROLES_ACTIVOS = set()  # Creadores con un control de asistencia en curso
+FLOW_TYPE = "attendance"
 
 
 async def _enviar_embed(usuario: discord.User, titulo: str, descripcion: str):
@@ -44,9 +46,7 @@ async def _enviar_embed(usuario: discord.User, titulo: str, descripcion: str):
 
 
 def _chequeo_dm(author_id: int):
-    def check(m):
-        return m.author.id == author_id and m.guild is None
-    return check
+    return make_check(author_id, FLOW_TYPE)
 
 
 def _si_respuesta(texto: str) -> bool:
@@ -58,8 +58,18 @@ async def desencadenar_asistencia(bot: discord.Client, evento):
     if evento["attendance_checked"] or evento["creator_id"] in CONTROLES_ACTIVOS:
         return
 
-    marcar_asistencia_revisada(evento["id"])
     creator_id = evento["creator_id"]
+    # Check if user has an active edit flow - if so, skip attendance for now
+    active = get_active_flow(creator_id)
+    if active and active != FLOW_TYPE:
+        log.info("User %s has active flow '%s', deferring attendance check", creator_id, active)
+        return
+
+    if not register_flow(creator_id, FLOW_TYPE):
+        log.warning("Cannot register attendance flow for user %s", creator_id)
+        return
+
+    marcar_asistencia_revisada(evento["id"])
     CONTROLES_ACTIVOS.add(creator_id)
 
     try:
@@ -78,12 +88,14 @@ async def desencadenar_asistencia(bot: discord.Client, evento):
     except discord.HTTPException:
         log.warning("No se pudo contactar al creador %s para el control de asistencia", creator_id)
         CONTROLES_ACTIVOS.discard(creator_id)
+        unregister_flow(creator_id, FLOW_TYPE)
         return
 
     try:
         msg = await bot.wait_for("message", check=_chequeo_dm(creator_id), timeout=TIMEOUT_PASO)
     except asyncio.TimeoutError:
         CONTROLES_ACTIVOS.discard(creator_id)
+        unregister_flow(creator_id, FLOW_TYPE)
         return
 
     if _si_respuesta(msg.content):
@@ -91,6 +103,7 @@ async def desencadenar_asistencia(bot: discord.Client, evento):
             await tomar_asistencia(bot, evento)
         finally:
             CONTROLES_ACTIVOS.discard(creator_id)
+            unregister_flow(creator_id, FLOW_TYPE)
         return
 
     # El creador dijo que aún no concluye → ofrecer aplazamiento
@@ -107,12 +120,14 @@ async def desencadenar_asistencia(bot: discord.Client, evento):
         )
     except discord.HTTPException:
         CONTROLES_ACTIVOS.discard(creator_id)
+        unregister_flow(creator_id, FLOW_TYPE)
         return
 
     try:
         msg2 = await bot.wait_for("message", check=_chequeo_dm(creator_id), timeout=TIMEOUT_PASO)
     except asyncio.TimeoutError:
         CONTROLES_ACTIVOS.discard(creator_id)
+        unregister_flow(creator_id, FLOW_TYPE)
         return
 
     opcion = msg2.content.strip().lower()
@@ -122,6 +137,7 @@ async def desencadenar_asistencia(bot: discord.Client, evento):
         except discord.HTTPException:
             pass
         CONTROLES_ACTIVOS.discard(creator_id)
+        unregister_flow(creator_id, FLOW_TYPE)
         return
 
     cnt = opcion
@@ -147,6 +163,7 @@ async def desencadenar_asistencia(bot: discord.Client, evento):
         except discord.HTTPException:
             pass
         CONTROLES_ACTIVOS.discard(creator_id)
+        unregister_flow(creator_id, FLOW_TYPE)
         asyncio.create_task(_reintento_asistencia(bot, evento, total_min))
     else:
         try:
@@ -154,6 +171,7 @@ async def desencadenar_asistencia(bot: discord.Client, evento):
         except discord.HTTPException:
             pass
         CONTROLES_ACTIVOS.discard(creator_id)
+        unregister_flow(creator_id, FLOW_TYPE)
 
 
 async def _reintento_asistencia(bot: discord.Client, evento: dict, minutos: int):

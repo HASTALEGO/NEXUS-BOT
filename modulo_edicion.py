@@ -16,6 +16,7 @@ from database import (
     zona_horaria_defecto,
     zona_horaria_guardada,
 )
+from dm_flows import make_check, register_flow, unregister_flow
 from formatters import (
     COLOR_BLANCO,
     a_utc_iso,
@@ -31,6 +32,7 @@ log = logging.getLogger(__name__)
 
 POR_PAGINA = 15
 SESIONES_ACTIVAS = set()
+FLOW_TYPE = "edit"
 
 
 def _zona_usuario(interaction):
@@ -59,8 +61,7 @@ class _Asistente:
         return self.msg
 
     async def esperar(self) -> str:
-        def check(m):
-            return m.author.id == self.usuario.id and m.guild is None
+        check = make_check(self.usuario.id, FLOW_TYPE)
         try:
             msg = await self.bot.wait_for("message", check=check, timeout=TIMEOUT_PASO)
         except asyncio.TimeoutError:
@@ -204,6 +205,8 @@ def _crear_edicion(elegido, nuevo_inicio, canal_id=None, duracion=None, recordat
 async def iniciar_edicion_evento(bot: commands.Bot, event_id: int, interaction: discord.Interaction):
     """Punto 6: asistente de edición de un evento por DM."""
     usuario = interaction.user
+    if not register_flow(usuario.id, FLOW_TYPE):
+        return await _avisar_fallo(interaction, "‼ Ya tienes otro asistente DM activo. Espera a que termine.")
     SESIONES_ACTIVAS.add(usuario.id)
     flujo = _Asistente(bot, interaction)
     try:
@@ -337,6 +340,7 @@ async def iniciar_edicion_evento(bot: commands.Bot, event_id: int, interaction: 
         await _avisar_fallo(interaction, "‼ La edición falló por un error interno.")
     finally:
         SESIONES_ACTIVAS.discard(usuario.id)
+        unregister_flow(usuario.id, FLOW_TYPE)
 
 
 async def _renombrar_hilo(bot: commands.Bot, evento):
@@ -395,6 +399,8 @@ async def _editar_cupos(bot, interaction, flujo: _Asistente, event_id: int) -> b
 async def iniciar_edicion_select(bot: commands.Bot, interaction: discord.Interaction):
     """Elige un evento propio y lanza el editor (para /editar_evento sin ID)."""
     usuario = interaction.user
+    if not register_flow(usuario.id, FLOW_TYPE):
+        return await _avisar_fallo(interaction, "‼ Ya tienes otro asistente DM activo. Espera a que termine.")
     SESIONES_ACTIVAS.add(usuario.id)
     flujo = _Asistente(bot, interaction)
     try:
@@ -406,12 +412,15 @@ async def iniciar_edicion_select(bot: commands.Bot, interaction: discord.Interac
             return await flujo.enviar("CANCELADO", "‼ Edición cancelada.", False)
     finally:
         SESIONES_ACTIVAS.discard(usuario.id)
+        unregister_flow(usuario.id, FLOW_TYPE)
     await iniciar_edicion_evento(bot, elegido["id"], interaction)
 
 
 async def iniciar_repetir_evento(bot: commands.Bot, interaction: discord.Interaction):
     """Punto 5: reutilización de un evento pasado para crear una nueva edición."""
     usuario, guild = interaction.user, interaction.guild
+    if not register_flow(usuario.id, FLOW_TYPE):
+        return await _avisar_fallo(interaction, "‼ Ya tienes otro asistente DM activo. Espera a que termine.")
     SESIONES_ACTIVAS.add(usuario.id)
     flujo = _Asistente(bot, interaction)
     try:
@@ -526,6 +535,7 @@ async def iniciar_repetir_evento(bot: commands.Bot, interaction: discord.Interac
         await _avisar_fallo(interaction, "‼ La reutilización falló por un error interno.")
     finally:
         SESIONES_ACTIVAS.discard(usuario.id)
+        unregister_flow(usuario.id, FLOW_TYPE)
 
 
 async def _avisar_fallo(interaction: discord.Interaction, mensaje: str):
