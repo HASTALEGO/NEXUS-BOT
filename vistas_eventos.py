@@ -430,6 +430,19 @@ class EventoView(discord.ui.View):
         )
 
         async def fb_cb(interaction: discord.Interaction):
+            conn = conectar_db()
+            try:
+                asistio = conn.execute(
+                    "SELECT 1 FROM asistencia WHERE event_id = ? AND user_id = ? AND attended = 1",
+                    (self.evento_id, interaction.user.id),
+                ).fetchone()
+            finally:
+                conn.close()
+            if not asistio:
+                return await interaction.response.send_message(
+                    f"{ICON_ALERT} Solo los miembros que confirmaron asistencia pueden valorar este evento.",
+                    ephemeral=True,
+                )
             await interaction.response.send_modal(FeedbackModal(self.evento_id))
 
         btn_feedback.callback = fb_cb

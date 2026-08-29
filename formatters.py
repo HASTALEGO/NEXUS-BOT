@@ -251,9 +251,11 @@ def formatear_recordatorios(recordatorios: list) -> str:
     res = []
     for m in recordatorios:
         if m >= 1440:
-            res.append(f"{m // 1440} dia(s)")
+            v = m // 1440
+            res.append(f"{v} día" if v == 1 else f"{v} días")
         elif m >= 60:
-            res.append(f"{m // 60} hora(s)")
+            v = m // 60
+            res.append(f"{v} hora" if v == 1 else f"{v} horas")
         else:
             res.append(f"{m} min")
     return ", ".join(res)

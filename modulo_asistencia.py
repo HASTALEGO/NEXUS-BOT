@@ -130,9 +130,19 @@ async def desencadenar_asistencia(bot: discord.Client, evento):
     total_min = (int(h.group(1)) * 60 if h else 0) + (int(m.group(1)) if m else 0)
 
     if total_min > 0:
+        tiempo_str = f"{total_min} minuto" if total_min == 1 else f"{total_min} minutos"
+        if total_min >= 60:
+            h = total_min // 60
+            m = total_min % 60
+            if m == 0:
+                tiempo_str = f"{h} hora" if h == 1 else f"{h} horas"
+            else:
+                parte_h = f"{h} hora" if h == 1 else f"{h} horas"
+                parte_m = f"{m} minuto" if m == 1 else f"{m} minutos"
+                tiempo_str = f"{parte_h} y {parte_m}"
         try:
             await creador.send(
-                f"{ICON_CHECK} Entendido. Volveré a preguntar en **{total_min} minutos**."
+                f"{ICON_CHECK} Entendido. Volveré a preguntar en **{tiempo_str}**."
             )
         except discord.HTTPException:
             pass
