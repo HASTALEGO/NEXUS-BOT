@@ -644,3 +644,5 @@ def configurar_creador_eventos(bot: commands.Bot):
         await interaction.response.defer(ephemeral=True)
         await interaction.followup.send("► Asistente enviado por mensaje privado (DM).", ephemeral=True)
         asyncio.create_task(ejecutar_creador_lineal(bot, interaction))
+
+# perritos
